@@ -1,0 +1,15 @@
+{
+  "name": "meridyen-harekati",
+  "version": "1.0.0",
+  "description": "Meridyen Harekâtı — three.js ile yazılmış özgün bir büyük strateji oyunu",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "test": "node tools/simtest.mjs",
+    "bundle": "node tools/bundle.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5"
+  }
+}
