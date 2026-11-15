@@ -125,7 +125,7 @@ function panelProduction(app) {
     const E = EQUIP[l.eq], out = eco.lineOutput(c, l);
     const short = Object.keys(E.res).filter((k) => c._short[k] < 0.999).map((k) => RESOURCES[k].name);
     return `<div class="card"><div class="row"><h4 class="grow">${E.name}</h4><span class="small muted">Depo</span><b class="num">${fmt(c.stock[l.eq])}</b></div>
-      <div class="row small"><span class="grow muted">Verim ${pct(l.eff)} / ${pct(eco.effCap(c))} · günde <b class="num" style="color:var(--text)">${out >= 10 ? Math.round(out) : out.toFixed(1)}</b></span>
+      <div class="row small"><span class="grow muted">Verim ${pct(l.eff)} / ${pct(eco.effCap(c))} · günde <b class="num" style="color:var(--text)">${out >= 10 ? Math.round(out) : out.toFixed(1).replace('.', ',')}</b></span>
       <span class="step"><button data-act="lineFac" data-arg="${i}" data-arg2="-1" aria-label="Azalt">−</button><b>${l.fac}</b><button data-act="lineFac" data-arg="${i}" data-arg2="1" aria-label="Artır">+</button></span>
       <button class="btn sm" data-act="lineFac" data-arg="${i}" data-arg2="5">+5</button></div>
       ${short.length ? `<div class="tiny bad">Kaynak açığı: ${short.join(', ')} — üretim düşük.</div>` : ''}</div>`;
@@ -171,7 +171,7 @@ function panelBuild(app) {
 
 // ---------------- Ordu
 function statLine(s) {
-  return `<div class="row tiny muted" style="flex-wrap:wrap;gap:4px 10px"><span>Saldırı <b style="color:var(--text)">${Math.round(s.atk)}</b></span><span>Savunma <b style="color:var(--text)">${Math.round(s.def)}</b></span><span>Yarma <b style="color:var(--text)">${Math.round(s.brk)}</b></span><span>Teşkilat <b style="color:var(--text)">${Math.round(s.org)}</b></span><span>Hız <b style="color:var(--text)">${s.speed.toFixed(1)}</b></span><span>Genişlik <b style="color:var(--text)">${s.width}</b></span></div>`;
+  return `<div class="row tiny muted" style="flex-wrap:wrap;gap:4px 10px"><span>Saldırı <b style="color:var(--text)">${Math.round(s.atk)}</b></span><span>Savunma <b style="color:var(--text)">${Math.round(s.def)}</b></span><span>Yarma <b style="color:var(--text)">${Math.round(s.brk)}</b></span><span>Teşkilat <b style="color:var(--text)">${Math.round(s.org)}</b></span><span>Hız <b style="color:var(--text)">${s.speed.toFixed(1).replace('.', ',')}</b></span><span>Genişlik <b style="color:var(--text)">${s.width}</b></span></div>`;
 }
 function needLine(c, s) {
   const eq = Object.keys(s.eq).map((e) => `<span class="${c.stock[e] >= s.eq[e] ? '' : 'bad'}">${EQUIP[e].short} ${fmt(s.eq[e])}</span>`).join(' · ');

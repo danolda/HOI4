@@ -162,7 +162,7 @@ export class UI {
     this.el.top.innerHTML = `
       <button class="tb-nation" data-act="tab" data-arg="state" data-tip="Devlet panelini aç"><img src="${flagURL(nat)}" alt=""><span><b>${nat.name}</b><small>${S.observer ? 'Gözlemci' : IDEOLOGY[c.ideo].name}${f ? ' · ' + f.name : ''}</small></span></button>
       <div class="tb-stats">
-        ${stat('Nüfuz', `${Math.floor(c.pp)}<small>+${c._ppGain.toFixed(1)}</small>`, 'Yasalar ve diplomasi için harcanır.')}
+        ${stat('Nüfuz', `${Math.floor(c.pp)}<small>+${c._ppGain.toFixed(1).replace('.', ',')}</small>`, 'Yasalar ve diplomasi için harcanır.')}
         ${stat('İstikrar', Math.round(c.stab) + '%', 'Üretimi ve nüfuz kazancını etkiler.')}
         ${stat('Savaş desteği', Math.round(c.ws) + '%', 'Teslim olma eşiğini etkiler.')}
         ${stat('Asker', fmt(Math.max(0, c._mpFree)), 'Askere alınabilir serbest nüfus.', c._mpFree < 10000 ? 'warn' : '')}
@@ -184,6 +184,8 @@ export class UI {
     el.panel.hidden = !tab;
     if (!tab) return;
     if (!force && document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    el.panel.classList.toggle('wide', tab === 'goals');
+    el.panel.classList.toggle('mid', tab === 'research');
     el.ptitle.textContent = panelTitle(tab);
     if (force) el.pbody.scrollTop = 0;
     this.withScroll(el.pbody, renderPanel(this.app, tab));

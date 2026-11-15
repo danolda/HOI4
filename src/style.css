@@ -89,6 +89,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: rgba(17, 28, 34, 0.97); border-right: 1px solid var(--line);
   display: flex; flex-direction: column;
 }
+#panel.wide { width: min(1040px, calc(100% - var(--rail-w) - 16px)); }
+#panel.mid { width: min(600px, calc(100% - var(--rail-w) - 16px)); }
 .p-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 9px 16px; border-bottom: 1px solid var(--line); }
 .p-head h2 { flex: 1; margin: 0; font-family: var(--font-display); font-size: 24px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
 .p-head h2 small { font-family: var(--font-body); font-size: 12px; font-weight: 500; letter-spacing: 0.08em; color: var(--muted); margin-left: 8px; }
@@ -238,7 +240,7 @@ kbd { font-family: var(--font-body); font-size: 12.5px; background: var(--panel-
   #rail button { border-left: 0; border-top: 3px solid transparent; flex: 1 0 58px; padding: 5px 2px; }
   #rail button.on { border-top-color: var(--accent); }
   #rail .spacer { display: none; }
-  #panel { left: 0; right: 0; width: auto; top: auto; bottom: 54px; height: min(62%, 520px); border-right: 0; border-top: 1px solid var(--accent); }
+  #panel, #panel.wide, #panel.mid { left: 0; right: 0; width: auto; top: auto; bottom: 54px; height: min(62%, 520px); border-right: 0; border-top: 1px solid var(--accent); }
   #side { left: var(--gut-l); right: var(--gut-r); width: auto; top: auto; bottom: 64px; max-height: 44%; }
   #bl { left: var(--gut-l); bottom: 62px; max-width: calc(100% - 32px); }
   #br { bottom: 62px; }

@@ -356,8 +356,8 @@ const app = {
       this.acc += dt * SPEEDS[this.speed];
       const t0 = performance.now();
       let n = 0;
-      while (this.acc >= 1 && n < 60 && performance.now() - t0 < 14) { G.tickHour(); this.acc -= 1; n++; }
-      if (this.acc > 4) this.acc = 0;
+      while (this.acc >= 1 && n < 400 && performance.now() - t0 < 16) { G.tickHour(); this.acc -= 1; n++; }
+      if (this.acc > 48) this.acc = 48;
     }
     // klavye ile kaydırma
     const k = this.keys;
