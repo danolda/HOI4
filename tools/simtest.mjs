@@ -1,14 +1,14 @@
 // Başsız simülasyon testi: tüm ülkeleri yapay zekâ yönetir, N yıl koşar ve özet basar.
-// Kullanım: node tools/simtest.mjs [tohum] [yıl]
+// Kullanım: node tools/simtest.mjs [yıl]
 import { generateWorld } from '../src/worldgen.js';
 import { Game } from '../src/sim/game.js';
 import { fmtDate } from '../src/data.js';
 
-const seed = process.argv[2] || 'MERIDYEN';
-const years = Number(process.argv[3] || 8);
-const world = await generateWorld(seed);
-const G = Game.create(world, { player: 0, diff: 1 });
-G.S.observer = true;
+const years = Number(process.argv[2] || 8);
+const t00 = Date.now();
+const world = await generateWorld();
+console.log(`dünya ${Date.now() - t00} ms · kara eyaleti ${world.NL} · deniz bölgesi ${world.NP - world.NL} · ülke ${world.nations.length}`);
+const G = Game.create(world, { player: -1, humans: [], diff: 1 });
 const S = G.S;
 let majorLogs = 0;
 G.on('log', (e, major) => { if (major && (e.type === 'war' || e.type === 'peace')) { majorLogs++; console.log(`  [${fmtDate(e.t)}] ${e.text}`); } });
@@ -17,7 +17,7 @@ const t0 = Date.now();
 for (let y = 0; y < years; y++) {
   for (let h = 0; h < 24 * 365; h++) G.tickHour();
   const alive = S.C.filter((c) => c.alive);
-  const line = alive.map((c) => `${world.nations[c.id].tag}${c.capit ? '†' : ''}:${c._nProv}p/${c._nDiv}d`).join(' ');
+  const line = alive.filter((c) => c.major || c._nDiv >= 16).map((c) => `${world.nations[c.id].tag}${c.capit ? '†' : ''}:${c._nProv}p/${c._nDiv}d`).join(' ') + ` · yaşayan ${alive.length}`;
   console.log(`${fmtDate(S.hours)} | gerginlik ${S.tension.toFixed(0)} | savaş ${S.wars.length} | muharebe ${S.battles.length} | tümen ${S.divs.length} | ${line}`);
 }
 const ms = Date.now() - t0;

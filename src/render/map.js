@@ -7,7 +7,7 @@ import { clamp } from '../rng.js';
 
 const PALW = 1024;
 const FOV = 38;
-export const MIN_DIST = 110, MAX_DIST = 1900;
+export const MIN_DIST = 70, MAX_DIST = 2500;
 
 const VERT = /* glsl */ `
 varying vec2 vUv;
@@ -101,7 +101,7 @@ void main() {
   float hx = texture2D(tHeight, vUv + vec2(e.x, 0.0)).r - texture2D(tHeight, vUv - vec2(e.x, 0.0)).r;
   float hy = texture2D(tHeight, vUv + vec2(0.0, e.y)).r - texture2D(tHeight, vUv - vec2(0.0, e.y)).r;
   float hl = max(h, 0.0);
-  vec3 n = normalize(vec3(-hx * 11.0 * step(0.0, h), 1.0, -hy * 11.0 * step(0.0, h)));
+  vec3 n = normalize(vec3(-hx * 7.5 * step(0.0, h), 1.0, -hy * 7.5 * step(0.0, h)));
   float shade = dot(n, normalize(vec3(-0.55, 0.75, -0.42)));
   shade = 0.62 + 0.52 * smoothstep(0.25, 1.0, shade);
 
@@ -178,7 +178,7 @@ export class MapView {
     r.setClearColor(0x0a1318, 1);
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 5, 6000);
-    this.cam = { tx: MAP_W / 2, tz: MAP_H / 2, dist: 1100, yaw: 0, goalDist: 1100, anchor: null };
+    this.cam = { tx: MAP_W * 0.52, tz: MAP_H * 0.3, dist: 900, yaw: 0, goalDist: 900, anchor: null };
     this.mode = 'pol';
     this.sel = -1; this.hov = -1;
     this.highlight = null;
@@ -220,7 +220,7 @@ export class MapView {
 
   buildTerrain() {
     const W = this.world;
-    const GX = 384, GZ = 240;
+    const GX = 512, GZ = 256;
     const pos = new Float32Array((GX + 1) * (GZ + 1) * 3), uv = new Float32Array((GX + 1) * (GZ + 1) * 2);
     let k = 0, u = 0;
     for (let j = 0; j <= GZ; j++) for (let i = 0; i <= GX; i++) {
@@ -390,7 +390,7 @@ export class MapView {
     this.placeCamera();
     const u = this.uniforms;
     u.uTime.value = this.time; u.uSel.value = this.sel; u.uHov.value = this.hov;
-    u.uProvLines.value = this.mode === 'ter' ? 0.5 * (1 - clamp((c.dist - 500) / 700, 0, 1)) : 1 - clamp((c.dist - 900) / 800, 0, 0.85);
+    u.uProvLines.value = this.mode === 'ter' ? 0.5 * (1 - clamp((c.dist - 300) / 500, 0, 1)) : 1 - clamp((c.dist - 420) / 520, 0, 0.9);
   }
   render() { this.renderer.render(this.scene, this.camera); }
 }

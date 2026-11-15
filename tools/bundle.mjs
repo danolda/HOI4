@@ -13,7 +13,7 @@ const css = fs.readFileSync(path.join(root, 'src/style.css'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const body = html.slice(html.indexOf('<div id="app">'), html.indexOf('<script src='));
 const fonts = html.match(/<link rel="stylesheet" href="https:\/\/fonts[^>]+>/)[0];
-const three = html.match(/<script src="https:\/\/cdnjs[^>]+><\/script>/)[0];
+const three = html.match(/<script src="https:\/\/cdnjs[^>]+><\/script>/g).join('\n');
 const embed = `<title>Meridyen Harekâtı</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 ${fonts}

@@ -1,10 +1,11 @@
 // Kara harekâtı: yol bulma, hareket, muharebe, ikmal, hava ve deniz dengesi.
 import { MinHeap } from '../heap.js';
 import { TERRAIN } from '../data.js';
-import { ST_IDLE, ST_MOVE, ST_RETREAT, atWar, isFriend, divStats, tplOf, pushLog, natName } from './core.js';
+import { ST_IDLE, ST_MOVE, ST_RETREAT, atWar, isFriend, divStats, tplOf, pushLog, natName, humansOf } from './core.js';
 
-export const SEA_SPEED = 3.4;
-const KMH = 0.2;
+export const SEA_SPEED = 14; // km/saat (yükleme dâhil ortalama)
+const KMH = 0.3; // günlük yürüyüş payı: 4 km/saatlik piyade ≈ 29 km/gün
+function distKm(P, a, b) { return Math.hypot(P[a].cx - P[b].cx, P[a].cy - P[b].cy) * (P[a].kmpp + P[b].kmpp) * 0.5; }
 const ORG_K = 0.01, HP_K = 0.004;
 
 // ---- dizinler
@@ -23,7 +24,7 @@ export function spawnDivision(G, c, tplId, prov, opts = {}) {
   c.divNo[tpl.id] = (c.divNo[tpl.id] || 0) + 1;
   const d = {
     id: S.nextDiv++, o: c.id, t: tpl.id, n: `${c.divNo[tpl.id]}. ${tpl.name}`, p: prov,
-    s: opts.s ?? 1, g: opts.g ?? 1, path: [], prog: 0, st: ST_IDLE, b: -1, ent: 0, nos: 0, auto: opts.auto ?? (c.id !== S.player),
+    s: opts.s ?? 1, g: opts.g ?? 1, path: [], prog: 0, st: ST_IDLE, b: -1, ent: 0, nos: 0, auto: opts.auto ?? !c.human,
   };
   S.divs.push(d);
   if (S._pd) { S._pd[prov].push(d); S._byId.set(d.id, d); }
@@ -76,7 +77,7 @@ export function findPath(G, d, target, landOnly) {
   }
   pfCur++;
   const st = divStats(S, d);
-  const vmax = Math.max(SEA_SPEED, st.speed * KMH * 1.3);
+  const vmax = Math.max(SEA_SPEED, st.speed * KMH * 1.3) / 3.5; // piksel başına en az 3,5 km
   const tx = P[target].cx, ty = P[target].cy;
   const heap = pfHeap; heap.clear();
   pfG[d.p] = 0; pfStamp[d.p] = pfCur; pfFrom[d.p] = -1;
@@ -101,18 +102,18 @@ export function findPath(G, d, target, landOnly) {
         if (!canEnter(G, o, v)) continue;
         const k = S.ctrl[v];
         const hostile = k !== o && !isFriend(S, o, k);
-        relax(v, (Math.hypot(P[v].cx - pu.cx, P[v].cy - pu.cy) / landSpeed(G, st, v)) * (hostile ? 1.5 : 1));
+        relax(v, (distKm(P, u, v) / landSpeed(G, st, v)) * (hostile ? 1.5 : 1));
       }
       if (!landOnly && pu.seaNb.length && canEmbark(G, o, u)) {
-        for (const v of pu.seaNb) relax(v, Math.hypot(P[v].cx - pu.cx, P[v].cy - pu.cy) / SEA_SPEED + 36);
+        for (const v of pu.seaNb) relax(v, distKm(P, u, v) / SEA_SPEED + 36);
       }
     } else {
-      for (const v of pu.nb) relax(v, Math.hypot(P[v].cx - pu.cx, P[v].cy - pu.cy) / SEA_SPEED);
+      for (const v of pu.nb) relax(v, distKm(P, u, v) / SEA_SPEED);
       for (const v of pu.landNb) {
         if (!canEnter(G, o, v)) continue;
         const k = S.ctrl[v];
         const hostile = k !== o && !isFriend(S, o, k);
-        relax(v, Math.hypot(P[v].cx - pu.cx, P[v].cy - pu.cy) / landSpeed(G, st, v) + (hostile ? 60 : 12));
+        relax(v, distKm(P, u, v) / landSpeed(G, st, v) + (hostile ? 60 : 12));
       }
     }
   }
@@ -138,7 +139,8 @@ export function haltDiv(G, d) {
 }
 export function orderMove(G, d, target, landOnly) {
   if (d.st === ST_RETREAT || d.dead) return false;
-  const path = findPath(G, d, target, landOnly);
+  let path = findPath(G, d, target, true);
+  if (!path && !landOnly) path = findPath(G, d, target, false);
   if (!path) return false;
   if (!path.length) { haltDiv(G, d); return true; }
   const keep = d.st === ST_MOVE && d.path.length && d.path[0] === path[0];
@@ -236,7 +238,8 @@ function retreat(G, dv) {
   }
   if (best < 0) {
     const enemy = S.ctrl[dv.p] !== dv.o ? S.ctrl[dv.p] : -1;
-    if (dv.o === S.player || enemy === S.player) pushLog(G, 'battle', `${dv.n} (${natName(G, dv.o)}) kuşatıldı ve teslim oldu.`, dv.p);
+    const to = humansOf(S, [dv.o, enemy]);
+    if (to.length) pushLog(G, 'battle', `${dv.n} (${natName(G, dv.o)}) kuşatıldı ve teslim oldu.`, dv.p, false, to);
     destroyDiv(G, dv, 0.9);
     return;
   }
@@ -378,7 +381,7 @@ export function hourlyMilitary(G) {
         if (hasDefenders(S, next, d.o)) {
           if (d.g <= 0.02) continue;
           if (d.b < 0) joinBattle(G, d, next);
-          d.prog = Math.min(0.9, d.prog + (landSpeed(G, st, next) / Math.hypot(P[next].cx - P[d.p].cx, P[next].cy - P[d.p].cy)) * 0.3);
+          d.prog = Math.min(0.9, d.prog + (landSpeed(G, st, next) / Math.max(20, distKm(P, d.p, next))) * 0.3);
           continue;
         }
       }
@@ -388,7 +391,7 @@ export function hourlyMilitary(G) {
       if (d.p < NL && !canEmbark(G, d.o, d.p)) { haltDiv(G, d); continue; }
       sp = SEA_SPEED;
     }
-    d.prog += sp / Math.max(8, Math.hypot(P[next].cx - P[d.p].cx, P[next].cy - P[d.p].cy));
+    d.prog += sp / Math.max(20, distKm(P, d.p, next));
     if (d.g < 1 && d.nos <= 2) d.g = Math.min(1, d.g + 0.003 * (1 + c._mods.orgRegen));
     if (d.prog >= 1) arrive(G, d, next);
   }

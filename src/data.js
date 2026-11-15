@@ -1,40 +1,93 @@
 // Oyunun sabit verileri: uluslar, teçhizat, birlikler, teknolojiler, hedefler, yasalar.
 
-export const START_YEAR = 1930;
+export const START_YEAR = 1936;
 
 export const IDEOLOGY = {
   dem: { name: 'Cumhuriyetçi', desc: 'Seçimle yönetilen, savaşa geç giren ama sanayisi güçlü devletler.', color: '#5b8fd1' },
   mil: { name: 'Militarist', desc: 'Ordunun yönettiği, yayılmacı ve savaşa hazır devletler.', color: '#9a7fb5' },
   kol: { name: 'Kolektivist', desc: 'Devrimci, kitle seferberliğine dayanan devletler.', color: '#d06a5c' },
-  mon: { name: 'Gelenekçi', desc: 'Hanedan ve denge siyasetiyle ayakta duran tarafsız devletler.', color: '#c9a95a' },
+  mon: { name: 'Tarafsız', desc: 'Bloklara mesafeli duran, denge siyaseti izleyen devletler.', color: '#c9a95a' },
 };
 
-// İlk 7 ulus büyük güç, kalanlar küçük devlet.
+// 1936 dünyası. İlk 7 ülke büyük güç. Sütunlar:
+// etiket, ad, resmî ad, ideoloji, harita rengi, başkent, boylam, enlem, nüfus (Mn), sivil, askeri, tersane, tümen, bayrak
+const N = (tag, name, long, ideo, color, cap, lon, lat, pop, civ, mil, dock, divs, flag, x) => ({ tag, name, long, ideo, color, cap, lon, lat, pop, civ, mil, dock, divs, flag, ...(x || {}) });
 export const NATIONS = [
-  { tag: 'VAL', name: 'Valdris', long: 'Valdris İmparatorluğu', ideo: 'mil', color: [124, 98, 148], leader: 'Mareşal Aldric Vorn', flag: { pat: 'cross', c: ['#2b2233', '#d9d2c2', '#b8483e'], em: 'none' } },
-  { tag: 'KAE', name: 'Kaerun', long: 'Kaerun Cumhuriyeti', ideo: 'dem', color: [84, 130, 186], leader: 'Başkan Elena Marlow', flag: { pat: 'hband', c: ['#24538f', '#e8e4d8', '#24538f'], em: 'star' } },
-  { tag: 'SOL', name: 'Soltera', long: 'Soltera Halk Birliği', ideo: 'kol', color: [186, 88, 76], leader: 'Genel Sekreter Mira Tarkan', flag: { pat: 'plain', c: ['#a8322c', '#e7b93c'], em: 'gear' } },
-  { tag: 'NOR', name: 'Norvask', long: 'Norvask Krallığı', ideo: 'mon', color: [88, 156, 140], leader: 'Kral III. Haldor', flag: { pat: 'nordic', c: ['#1f5c57', '#f0ead8', '#d9a13a'], em: 'none' } },
-  { tag: 'ISK', name: 'Iskara', long: 'Iskara Federasyonu', ideo: 'dem', color: [204, 168, 78], leader: 'Başbakan Teo Aldani', flag: { pat: 'vband', c: ['#d9a13a', '#f0ead8', '#2f6b4a'], em: 'none' } },
-  { tag: 'DAL', name: 'Dalmor', long: 'Dalmor Hanlığı', ideo: 'mil', color: [146, 110, 70], leader: 'Han Batur Kaelan', flag: { pat: 'chevron', c: ['#5b3a1e', '#e0c890', '#1c1c1c'], em: 'none' } },
-  { tag: 'ZER', name: 'Zeranth', long: 'Zeranth Konfederasyonu', ideo: 'mon', color: [130, 160, 84], leader: 'Naip Oren Saval', flag: { pat: 'hband', c: ['#3f6b2c', '#f0ead8', '#8a2f2f'], em: 'diamond' } },
-  { tag: 'AQU', name: 'Aquilon', long: 'Aquilon Cumhuriyeti', ideo: 'dem', color: [112, 176, 200], leader: 'Cumhurbaşkanı Lucan Verra', flag: { pat: 'vband', c: ['#2b6f8f', '#f0ead8', '#2b6f8f'], em: 'disc' } },
-  { tag: 'BEL', name: 'Belgara', long: 'Belgara Dükalığı', ideo: 'mon', color: [182, 142, 176], leader: 'Düşes Amelie Roth', flag: { pat: 'quarter', c: ['#7a3f70', '#e8d9a8'], em: 'none' } },
-  { tag: 'TAV', name: 'Tavrosya', long: 'Tavrosya Devleti', ideo: 'mil', color: [158, 92, 122], leader: 'General Kosta Dravin', flag: { pat: 'hband', c: ['#1c1c1c', '#8f2742', '#1c1c1c'], em: 'disc' } },
-  { tag: 'ARD', name: 'Ardanya', long: 'Ardanya Krallığı', ideo: 'mon', color: [208, 138, 90], leader: 'Kral II. Edmar', flag: { pat: 'saltire', c: ['#c2622b', '#f0ead8'], em: 'none' } },
-  { tag: 'VOS', name: 'Vostra', long: 'Vostra Halk Devleti', ideo: 'kol', color: [196, 112, 112], leader: 'Birinci Sekreter Nadya Volkar', flag: { pat: 'hband', c: ['#a8322c', '#a8322c', '#1c1c1c'], em: 'star' } },
-  { tag: 'LUM', name: 'Lumera', long: 'Lumera Serbest Şehirleri', ideo: 'dem', color: [140, 194, 152], leader: 'Konsül Dario Lenz', flag: { pat: 'vband', c: ['#f0ead8', '#3f8f5f', '#f0ead8'], em: 'none' } },
-  { tag: 'KOR', name: 'Kordavan', long: 'Kordavan Sultanlığı', ideo: 'mon', color: [214, 180, 108], leader: 'Sultan Selmar', flag: { pat: 'plain', c: ['#1f5c57', '#e7b93c'], em: 'sun' } },
-  { tag: 'HAL', name: 'Halvenya', long: 'Halvenya Cumhuriyeti', ideo: 'dem', color: [124, 144, 208], leader: 'Başbakan Ines Halver', flag: { pat: 'nordic', c: ['#f0ead8', '#3a55a8', '#3a55a8'], em: 'none' } },
-  { tag: 'MER', name: 'Meruvya', long: 'Meruvya Komünü', ideo: 'kol', color: [164, 82, 82], leader: 'Komiser Anton Reval', flag: { pat: 'chevron', c: ['#8f2a2a', '#1c1c1c', '#e7b93c'], em: 'none' } },
+  N('GER', 'Almanya', 'Alman İmparatorluğu', 'mil', [108, 112, 120], 'Berlin', 13.4, 52.5, 67, 28, 24, 6, 46, 'h:000000,ffffff,dd0000'),
+  N('ENG', 'Britanya', 'Birleşik Krallık', 'dem', [214, 116, 124], 'Londra', -0.1, 51.5, 47, 32, 14, 14, 26, 'u', { faction: 'Müttefikler' }),
+  N('FRA', 'Fransa', 'Fransa Cumhuriyeti', 'dem', [86, 122, 196], 'Paris', 2.35, 48.85, 41, 26, 12, 7, 34, 'v:0055a4,ffffff,ef4135'),
+  N('ITA', 'İtalya', 'İtalya Krallığı', 'mil', [104, 160, 104], 'Roma', 12.5, 41.9, 43, 20, 14, 8, 30, 'v:009246,ffffff,ce2b37'),
+  N('SOV', 'Sovyetler Birliği', 'Sovyet Sosyalist Cumhuriyetler Birliği', 'kol', [168, 62, 54], 'Moskova', 37.6, 55.75, 165, 36, 26, 6, 70, 'p:cc0000|e:star:ffd700:tl'),
+  N('USA', 'ABD', 'Amerika Birleşik Devletleri', 'dem', [92, 148, 188], 'Vaşington', -77.0, 38.9, 128, 52, 10, 12, 14, 's', { iso: true }),
+  N('JAP', 'Japonya', 'Japon İmparatorluğu', 'mil', [226, 208, 176], 'Tokyo', 139.7, 35.7, 70, 20, 16, 10, 40, 'p:ffffff|e:disc:bc002d'),
+  N('CHI', 'Çin', 'Çin Cumhuriyeti', 'mon', [222, 196, 96], 'Nankin', 118.8, 32.05, 400, 8, 5, 1, 44, 'p:de2910|k:1a3a8a|e:sun:ffffff:tl', { light: 0.8 }),
+  N('TUR', 'Türkiye', 'Türkiye Cumhuriyeti', 'mon', [200, 72, 72], 'Ankara', 32.85, 39.93, 16, 6, 3, 1, 18, 'p:e30a17|e:crescent:ffffff'),
+  N('POL', 'Polonya', 'Polonya Cumhuriyeti', 'mon', [190, 120, 150], 'Varşova', 21.0, 52.2, 34, 9, 5, 1, 30, 'h:ffffff,dc143c'),
+  N('SPA', 'İspanya', 'İspanya Cumhuriyeti', 'dem', [220, 186, 90], 'Madrid', -3.7, 40.4, 25, 8, 4, 3, 16, 'h:c60b1e,ffc400,630b57'),
+  N('POR', 'Portekiz', 'Portekiz Cumhuriyeti', 'mon', [70, 140, 110], 'Lizbon', -9.1, 38.7, 7, 3, 1, 1, 6, 'v:006600,ff0000|e:disc:ffcc00'),
+  N('NED', 'Hollanda', 'Hollanda Krallığı', 'dem', [226, 150, 80], 'Amsterdam', 4.9, 52.4, 8.5, 7, 2, 3, 8, 'h:ae1c28,ffffff,21468b'),
+  N('BEL', 'Belçika', 'Belçika Krallığı', 'dem', [196, 170, 70], 'Brüksel', 4.35, 50.85, 8.3, 7, 2, 1, 10, 'v:000000,fae042,ed2939'),
+  N('SWI', 'İsviçre', 'İsviçre Konfederasyonu', 'dem', [190, 90, 90], 'Bern', 7.45, 46.95, 4.2, 5, 2, 0, 8, 'p:d52b1e|e:plus:ffffff'),
+  N('AUT', 'Avusturya', 'Avusturya Federal Devleti', 'mon', [200, 200, 200], 'Viyana', 16.37, 48.2, 6.7, 5, 2, 0, 7, 'h:ed2939,ffffff,ed2939'),
+  N('CZE', 'Çekoslovakya', 'Çekoslovakya Cumhuriyeti', 'dem', [90, 170, 170], 'Prag', 14.4, 50.08, 15, 10, 7, 0, 16, 'h:ffffff,d7141a|tri:11457e'),
+  N('HUN', 'Macaristan', 'Macaristan Krallığı', 'mon', [150, 120, 90], 'Budapeşte', 19.05, 47.5, 9, 5, 2, 0, 8, 'h:cd2a3e,ffffff,436f4d'),
+  N('ROM', 'Romanya', 'Romanya Krallığı', 'mon', [214, 196, 70], 'Bükreş', 26.1, 44.43, 19, 6, 3, 1, 22, 'v:002b7f,fcd116,ce1126'),
+  N('YUG', 'Yugoslavya', 'Yugoslavya Krallığı', 'mon', [80, 100, 150], 'Belgrad', 20.47, 44.8, 15, 5, 2, 1, 18, 'h:0c4076,ffffff,de0000'),
+  N('BUL', 'Bulgaristan', 'Bulgaristan Çarlığı', 'mon', [110, 150, 90], 'Sofya', 23.32, 42.7, 6.3, 3, 1, 0, 10, 'h:ffffff,00966e,d62612'),
+  N('GRE', 'Yunanistan', 'Yunanistan Krallığı', 'mon', [110, 170, 220], 'Atina', 23.73, 37.98, 7, 3, 1, 2, 10, 'p:0d5eaf|e:plus:ffffff'),
+  N('ALB', 'Arnavutluk', 'Arnavutluk Krallığı', 'mon', [160, 60, 90], 'Tiran', 19.82, 41.33, 1, 1, 0, 0, 2, 'p:e41e20|e:diamond:000000'),
+  N('SWE', 'İsveç', 'İsveç Krallığı', 'dem', [80, 140, 200], 'Stokholm', 18.07, 59.33, 6.3, 8, 3, 3, 9, 'p:006aa7|x:fecc00'),
+  N('NOR', 'Norveç', 'Norveç Krallığı', 'dem', [150, 110, 90], 'Oslo', 10.75, 59.9, 2.9, 4, 1, 2, 5, 'p:ba0c2f|x:ffffff,00205b'),
+  N('DEN', 'Danimarka', 'Danimarka Krallığı', 'dem', [180, 100, 90], 'Kopenhag', 12.57, 55.68, 3.7, 5, 1, 2, 4, 'p:c8102e|x:ffffff'),
+  N('FIN', 'Finlandiya', 'Finlandiya Cumhuriyeti', 'dem', [220, 220, 235], 'Helsinki', 24.94, 60.17, 3.6, 3, 1, 1, 9, 'p:ffffff|x:003580'),
+  N('EST', 'Estonya', 'Estonya Cumhuriyeti', 'mon', [90, 150, 200], 'Tallinn', 24.75, 59.44, 1.1, 1, 0, 0, 3, 'h:0072ce,000000,ffffff'),
+  N('LAT', 'Letonya', 'Letonya Cumhuriyeti', 'mon', [140, 70, 80], 'Riga', 24.1, 56.95, 1.9, 2, 0, 0, 3, 'h:9e3039,ffffff,9e3039'),
+  N('LIT', 'Litvanya', 'Litvanya Cumhuriyeti', 'mon', [200, 170, 80], 'Kaunas', 23.9, 54.9, 2.5, 1, 0, 0, 3, 'h:fdb913,006a44,c1272d'),
+  N('IRE', 'İrlanda', 'İrlanda Özgür Devleti', 'dem', [110, 180, 110], 'Dublin', -6.26, 53.35, 3, 2, 0, 0, 2, 'v:169b62,ffffff,ff883e'),
+  N('PER', 'İran', 'İran Şahlığı', 'mon', [120, 150, 130], 'Tahran', 51.4, 35.7, 15, 2, 1, 0, 8, 'h:239f40,ffffff,da0000|e:sun:d4a017'),
+  N('IRQ', 'Irak', 'Irak Krallığı', 'mon', [150, 110, 110], 'Bağdat', 44.4, 33.3, 3.5, 1, 0, 0, 3, 'h:000000,ffffff,007a3d|tri:ce1126'),
+  N('SAU', 'Suudi Arabistan', 'Suudi Arabistan Krallığı', 'mon', [120, 160, 100], 'Riyad', 46.7, 24.7, 3, 1, 0, 0, 3, 'p:006c35|e:bar:ffffff'),
+  N('YEM', 'Yemen', 'Yemen Krallığı', 'mon', [150, 100, 80], 'Sana', 44.2, 15.35, 3, 1, 0, 0, 2, 'p:ce1126|e:star:ffffff'),
+  N('AFG', 'Afganistan', 'Afganistan Krallığı', 'mon', [110, 130, 160], 'Kabil', 69.2, 34.5, 8, 1, 0, 0, 4, 'v:000000,d32011,007a36'),
+  N('SIA', 'Siyam', 'Siyam Krallığı', 'mon', [200, 180, 120], 'Bangkok', 100.5, 13.75, 14, 2, 1, 1, 6, 'h:a51931,f4f5f8,2d2a4a,f4f5f8,a51931'),
+  N('MON', 'Moğolistan', 'Moğolistan Halk Cumhuriyeti', 'kol', [196, 150, 100], 'Ulan Batur', 106.9, 47.9, 0.8, 1, 0, 0, 2, 'p:c4272f|e:sun:f9cf02'),
+  N('ETH', 'Etiyopya', 'Etiyopya İmparatorluğu', 'mon', [150, 160, 90], 'Addis Ababa', 38.75, 9.0, 12, 1, 0, 0, 8, 'h:078930,fcdd09,da121a', { light: 1 }),
+  N('LIB', 'Liberya', 'Liberya Cumhuriyeti', 'dem', [170, 170, 220], 'Monrovia', -10.8, 6.3, 1, 1, 0, 0, 1, 'h:bf0a30,ffffff,bf0a30,ffffff,bf0a30|k:002868|e:star:ffffff:tl'),
+  N('SAF', 'Güney Afrika', 'Güney Afrika Birliği', 'dem', [180, 140, 170], 'Pretoria', 28.2, -25.75, 10, 5, 1, 1, 4, 'h:ff7900,ffffff,004494', { faction: 'Müttefikler' }),
+  N('CAN', 'Kanada', 'Kanada Dominyonu', 'dem', [190, 110, 100], 'Ottava', -75.7, 45.4, 11, 10, 2, 2, 5, 'p:c8102e|ku', { faction: 'Müttefikler' }),
+  N('AST', 'Avustralya', 'Avustralya Federasyonu', 'dem', [100, 160, 150], 'Canberra', 149.1, -35.3, 6.8, 6, 1, 2, 4, 'p:00247d|ku|e:star:ffffff:r', { faction: 'Müttefikler' }),
+  N('NZL', 'Yeni Zelanda', 'Yeni Zelanda Dominyonu', 'dem', [150, 130, 180], 'Wellington', 174.8, -41.3, 1.6, 2, 0, 1, 2, 'p:00247d|ku|e:star:cc142b:r', { faction: 'Müttefikler' }),
+  N('MEX', 'Meksika', 'Meksika Birleşik Devletleri', 'mon', [120, 170, 110], 'Meksiko', -99.13, 19.43, 18, 5, 1, 0, 8, 'v:006847,ffffff,ce1126|e:disc:8a6b2b'),
+  N('CUB', 'Küba', 'Küba Cumhuriyeti', 'mon', [150, 150, 200], 'Havana', -82.4, 23.1, 4, 1, 0, 0, 2, 'h:002a8f,ffffff,002a8f,ffffff,002a8f|tri:cf142b'),
+  N('HAI', 'Haiti', 'Haiti Cumhuriyeti', 'mon', [130, 120, 180], 'Port-au-Prince', -72.34, 18.54, 2.5, 1, 0, 0, 1, 'h:00209f,d21034'),
+  N('DOM', 'Dominik', 'Dominik Cumhuriyeti', 'mon', [180, 130, 130], 'Santo Domingo', -69.9, 18.48, 1.5, 1, 0, 0, 1, 'q:002d62,ce1126'),
+  N('GUA', 'Guatemala', 'Guatemala Cumhuriyeti', 'mon', [130, 180, 200], 'Guatemala', -90.5, 14.6, 2, 1, 0, 0, 1, 'v:4997d0,ffffff,4997d0'),
+  N('HON', 'Honduras', 'Honduras Cumhuriyeti', 'mon', [110, 150, 190], 'Tegucigalpa', -87.2, 14.1, 1, 1, 0, 0, 1, 'h:0073cf,ffffff,0073cf|e:star:0073cf'),
+  N('ELS', 'El Salvador', 'El Salvador Cumhuriyeti', 'mon', [170, 190, 220], 'San Salvador', -89.2, 13.7, 1.5, 1, 0, 0, 1, 'h:0f47af,ffffff,0f47af'),
+  N('NIC', 'Nikaragua', 'Nikaragua Cumhuriyeti', 'mon', [150, 200, 200], 'Managua', -86.25, 12.13, 0.8, 1, 0, 0, 1, 'h:0067c6,ffffff,0067c6|e:disc:c8a400'),
+  N('COS', 'Kosta Rika', 'Kosta Rika Cumhuriyeti', 'dem', [200, 150, 150], 'San José', -84.08, 9.93, 0.6, 1, 0, 0, 1, 'h:002b7f,ffffff,ce1126,ffffff,002b7f'),
+  N('PAN', 'Panama', 'Panama Cumhuriyeti', 'dem', [220, 170, 140], 'Panama', -79.52, 8.98, 0.6, 1, 0, 0, 1, 'q:ffffff,d21034'),
+  N('COL', 'Kolombiya', 'Kolombiya Cumhuriyeti', 'dem', [220, 200, 110], 'Bogota', -74.08, 4.6, 8.5, 2, 0, 0, 4, 'h:fcd116,fcd116,003893,ce1126'),
+  N('VEN', 'Venezuela', 'Venezuela Birleşik Devletleri', 'mon', [200, 150, 90], 'Karakas', -66.9, 10.5, 3.5, 2, 0, 0, 3, 'h:ffcc00,00247d,cf142b'),
+  N('ECU', 'Ekvador', 'Ekvador Cumhuriyeti', 'mon', [200, 190, 130], 'Quito', -78.5, -0.2, 2.5, 1, 0, 0, 2, 'h:ffdd00,ffdd00,034ea2,ed1c24'),
+  N('PRU', 'Peru', 'Peru Cumhuriyeti', 'mon', [200, 120, 110], 'Lima', -77.03, -12.05, 6.5, 2, 0, 0, 4, 'v:d91023,ffffff,d91023'),
+  N('BOL', 'Bolivya', 'Bolivya Cumhuriyeti', 'mon', [170, 190, 110], 'La Paz', -68.15, -16.5, 2.7, 1, 0, 0, 3, 'h:d52b1e,f9e300,007934'),
+  N('PAR', 'Paraguay', 'Paraguay Cumhuriyeti', 'mon', [190, 130, 150], 'Asunción', -57.6, -25.3, 1, 1, 0, 0, 3, 'h:d52b1e,ffffff,0038a8'),
+  N('URU', 'Uruguay', 'Uruguay Doğu Cumhuriyeti', 'dem', [150, 190, 220], 'Montevideo', -56.2, -34.9, 2, 2, 0, 0, 2, 'h:ffffff,0038a8,ffffff,0038a8,ffffff|k:ffffff|e:sun:fcd116:tl'),
+  N('CHL', 'Şili', 'Şili Cumhuriyeti', 'dem', [180, 100, 120], 'Santiago', -70.65, -33.45, 4.7, 3, 1, 1, 5, 'h:ffffff,d52b1e|k:0039a6|e:star:ffffff:tl'),
+  N('ARG', 'Arjantin', 'Arjantin Cumhuriyeti', 'mon', [150, 200, 230], 'Buenos Aires', -58.4, -34.6, 13, 7, 2, 2, 8, 'h:74acdf,ffffff,74acdf|e:sun:f6b40e'),
+  N('BRA', 'Brezilya', 'Brezilya Birleşik Devletleri', 'mon', [110, 180, 110], 'Rio de Janeiro', -43.2, -22.9, 39, 9, 2, 2, 12, 'p:009b3a|e:diamond:fedf00'),
 ];
 export const MAJORS = 7;
+export const TAG_INDEX = Object.fromEntries(NATIONS.map((n, i) => [n.tag, i]));
+// Başlangıçta verilmiş bağımsızlık garantileri (garantör -> korunan)
+export const START_GUARANTEES = [['SOV', 'MON'], ['ENG', 'POL'], ['FRA', 'POL'], ['FRA', 'CZE'], ['ENG', 'BEL'], ['FRA', 'BEL']];
 
 export const FACTION_NAMES = {
-  dem: 'Hür Devletler Paktı',
-  mil: 'Kartal İttifakı',
-  kol: 'Emekçi Birliği',
-  mon: 'Taçlar Antlaşması',
+  dem: 'Müttefikler',
+  mil: 'Mihver',
+  kol: 'Komintern',
+  mon: 'Tarafsızlar Bloğu',
 };
 
 export const TERRAIN = {

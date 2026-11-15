@@ -1,6 +1,6 @@
 // Sol panel içerikleri ve oyuncu eylemleri.
 import { IDEOLOGY, LAWS, TECHS, TECH_BY_ID, TECH_CATS, GOALS, GOAL_BY_ID, GOAL_BRANCHES, EQUIP, EQ_KEYS, BUILDING, BATTALION, BAT_KEYS, MAX_BATS, MOD_LABEL, MOD_FLAT, RESOURCES, FACTION_NAMES, fmtDate } from '../data.js';
-import { atWar, isFriend, tplOf, tplStats, tplAllowed, refreshAll, vpShare, DIFF } from '../sim/core.js';
+import { atWar, isFriend, tplOf, tplStats, tplAllowed, vpShare, DIFF } from '../sim/core.js';
 import * as eco from '../sim/economy.js';
 import * as dip from '../sim/diplomacy.js';
 import { flagURL, icon } from './flags.js';
@@ -39,7 +39,7 @@ function panelState(app) {
   }).join('')}</div></div>`;
   const wars = dip.warsOf(S, c.id);
   return `
-  <div class="row">${flagImg(app, c.id, 'big')}<div class="grow"><h4 style="margin:0;font-size:18px">${nat.long}</h4><div class="small muted">${nat.leader}</div>
+  <div class="row">${flagImg(app, c.id, 'big')}<div class="grow"><h4 style="margin:0;font-size:18px">${nat.long}</h4><div class="small muted">Başkent: ${app.world.prov[c.capital].name}</div>
     <div class="small"><span style="color:${IDEOLOGY[c.ideo].color}">${IDEOLOGY[c.ideo].name}</span> · ${f ? f.name : 'İttifaksız'}</div></div></div>
   <div class="sec"><h3>Ulusun durumu</h3>
     <div class="kv"><span data-tip="Fabrika verimini ve nüfuz kazancını etkiler.">İstikrar</span><span>${Math.round(c.stab)}%</span></div>${bar(c.stab / 100, 'g')}
@@ -270,7 +270,7 @@ function panelDiplo(app) {
         }
       }
     } else if (!o.capit) acts.push(btn('Barış teklif et', 'peace', o.id, { cls: 'sm', tip: 'Mevcut hatlarda barış önerir.' }));
-    detail = `<div class="card sel"><div class="row">${flagImg(app, o.id, 'big')}<div class="grow"><h4>${nat.long}</h4><div class="small muted">${nat.leader}</div>
+    detail = `<div class="card sel"><div class="row">${flagImg(app, o.id, 'big')}<div class="grow"><h4>${nat.long}</h4><div class="small muted">Başkent: ${W.prov[o.capital].name}${o.human ? ' · <span class="acc">oyuncu</span>' : ''}</div>
       <div class="small"><span style="color:${IDEOLOGY[o.ideo].color}">${IDEOLOGY[o.ideo].name}</span> · ${f ? f.name : 'İttifaksız'} ${relChip(app, o.id)}</div></div>
       <button class="ibtn" data-act="focusNation" data-arg="${o.id}" data-tip="Haritada göster">${icon('locate')}</button></div>
       <div class="kv small"><span>Bize bakışı / bizim bakışımız</span><span>${sign(Math.round(o.op[c.id]))} / ${sign(Math.round(c.op[o.id]))}</span></div>
@@ -292,11 +292,17 @@ function panelDiplo(app) {
 
 // ---------------- Menü
 function panelMenu(app) {
-  const S = app.G.S;
+  const S = app.G.S, mp = app.mp, W = app.world;
+  let online;
+  if (!mp) online = `<div class="row">${btn('Arkadaşını davet et', 'mpHost', '', { tip: 'Bir oda kodu üretir. Arkadaşın ana menüden bu kodla katılır ve bir ülke seçer.' })}</div><div class="small muted">Oyun sürerken de oda açabilirsin; arkadaşın yapay zekânın yönettiği bir ülkeyi devralır.</div>`;
+  else if (mp.role === 'host') online = `<div class="row"><span class="grow">Oda kodu <b class="code">${mp.ready ? mp.code : '…'}</b></span>${btn('Kopyala', 'mpCopy', '', { cls: 'sm' })}${btn('Odayı kapat', 'mpLeave', '', { cls: 'sm' })}</div>
+    <div class="small ${mp.connected ? 'acc' : 'warn'}">${mp.connected ? (mp.guestCountry >= 0 ? `Arkadaşın oyunda: ${W.nations[mp.guestCountry].name}` : 'Arkadaşın bağlandı, ülke seçiyor…') : 'Arkadaşının katılması bekleniyor…'}</div>`;
+  else online = `<div class="row"><span class="grow">Oda <b class="code">${mp.code}</b> · kurucu ${mp.hostCountry >= 0 ? W.nations[mp.hostCountry].name : ''}</span>${btn('Ayrıl', 'mpLeave', '', { cls: 'sm' })}</div><div class="small muted">Oyunu kurucunun bilgisayarı yürütür ve kaydeder.</div>`;
   return `
   <div class="sec"><h3>Oyun</h3>
-    <div class="row" style="flex-wrap:wrap">${btn('Kaydet', 'save', '', { cls: 'pri' })}${btn('Son kaydı yükle', 'load', '', { off: !app.hasSave() })}${btn('Ana menü', 'toStart', '')}</div>
-    <div class="small muted">Dünya tohumu: <b style="color:var(--text)">${esc(S.seed)}</b> · Zorluk: ${DIFF[S.diff].name} · Oyun her ayın başında kendiliğinden kaydedilir. Kayıt yalnızca bu tarayıcıda durur.</div></div>
+    <div class="row" style="flex-wrap:wrap">${app.isGuest ? '' : btn('Kaydet', 'save', '', { cls: 'pri' }) + btn('Son kaydı yükle', 'load', '', { off: !app.hasSave() })}${btn('Ana menü', 'toStart', '')}</div>
+    <div class="small muted">Zorluk: ${DIFF[S.diff].name} · Oyun her ayın başında kendiliğinden kaydedilir. Kayıt yalnızca bu tarayıcıda durur.</div></div>
+  <div class="sec"><h3>Çevrim içi</h3>${online}</div>
   <div class="sec"><h3>Nasıl oynanır</h3>${HELP_HTML}</div>`;
 }
 export const HELP_HTML = `<div class="help">
@@ -325,58 +331,49 @@ export function renderPanel(app, tab) {
   }
 }
 
-// ---------------- eylemler
+// ---------------- eylemler (oyun durumunu değiştirenler komut olarak gider)
 export const ACTS = {
-  law: (app, kind, i) => eco.setLaw(app.G, app.me, kind, +i),
+  law: (app, kind, i) => app.cmd('law', kind, +i),
   goalSel: (app, id) => { app.ui.st.goalSel = id; },
-  goalStart: (app, id) => eco.startGoal(app.G, app.me, id),
+  goalStart: (app, id) => app.cmd('goalStart', id),
   resSlot: (app, i) => { app.ui.st.resSlot = +i; },
   techCat: (app, k) => { app.ui.st.techCat = k; },
   research: (app, id) => {
     const c = app.me, st = app.ui.st;
     let slot = c.research[st.resSlot] ? c.research.findIndex((r) => !r) : st.resSlot;
     if (slot < 0) slot = st.resSlot;
-    if (eco.startResearch(app.G, c, slot, id)) { const next = c.research.findIndex((r) => !r); if (next >= 0) st.resSlot = next; }
+    app.cmd('research', slot, id);
+    const next = c.research.findIndex((r) => !r);
+    if (next >= 0) st.resSlot = next;
   },
-  lineFac: (app, i, d) => eco.setLineFac(app.G, app.me, +i, +d),
-  lineAdd: (app, k) => { if (eco.addLine(app.G, app.me, k)) eco.setLineFac(app.G, app.me, app.me.lines.length - 1, 1); },
-  import: (app, k, d) => eco.setImport(app.G, app.me, k, +d),
+  lineFac: (app, i, d) => app.cmd('lineFac', +i, +d),
+  lineAdd: (app, k) => app.cmd('lineAdd', k),
+  import: (app, k, d) => app.cmd('import', k, +d),
   place: (app, k) => app.startPlacement(k),
-  buildAuto: (app, k, n) => { for (let i = 0; i < +n; i++) { const p = eco.bestBuildProv(app.G, app.me, k); if (p < 0) break; eco.queueBuild(app.G, app.me, k, p); } },
-  buildCancel: (app, i) => { app.me.build.splice(+i, 1); },
-  buildUp: (app, i) => { const b = app.me.build; i = +i; if (i > 0) { const t = b[i]; b.splice(i, 1); b.unshift(t); } },
+  buildAuto: (app, k, n) => app.cmd('buildAuto', k, +n),
+  buildCancel: (app, i) => app.cmd('buildCancel', +i),
+  buildUp: (app, i) => app.cmd('buildUp', +i),
   armyTab: (app, k) => { app.ui.st.armyTab = k; },
-  train: (app, id, n) => eco.queueTrain(app.G, app.me, id, +n),
-  trainCancel: (app, i) => {
-    const c = app.me, t = c.train[+i];
-    if (!t) return;
-    if (t.started) { const s = tplStats(c, tplOf(c, t.tpl)); for (const e in s.eq) c.stock[e] += s.eq[e]; }
-    c.train.splice(+i, 1);
-  },
+  train: (app, id, n) => app.cmd('train', id, +n),
+  trainCancel: (app, i) => app.cmd('trainCancel', +i),
   tplSel: (app, id) => { app.ui.st.tplSel = id; },
-  tplNew: (app) => { const c = app.me; const id = eco.saveTemplate(app.G, c, null, `Özel Tümen ${c.nextTpl}`, { inf: 6, art: 1 }); if (id) app.ui.st.tplSel = id; },
-  tplBat: (app, k, d) => {
-    const c = app.me, t = tplOf(c, app.ui.st.tplSel);
-    const bats = { ...t.bats }; bats[k] = (bats[k] || 0) + +d;
-    eco.saveTemplate(app.G, c, t.id, t.name, bats);
-  },
-  autoAll: (app, v) => { for (const d of app.G.S.divs) if (d.o === app.me.id) d.auto = !!+v; app.G.unitsDirty = true; },
-  stance: (app, i) => { app.me.auto.stance = +i; },
+  tplNew: (app) => { app.cmd('tplNew'); const t = app.me.tpls[app.me.tpls.length - 1]; if (t) app.ui.st.tplSel = t.id; },
+  tplBat: (app, k, d) => app.cmd('tplBat', app.ui.st.tplSel, k, +d),
+  autoAll: (app, v) => app.cmd('autoAll', +v),
+  stance: (app, i) => app.cmd('stance', +i),
   dipSel: (app, id) => { app.ui.st.dipSel = +id; },
   focusNation: (app, id) => app.focusNation(+id),
-  dImprove: (app, id) => dip.improveRelations(app.G, app.me.id, +id),
-  dPact: (app, id) => { if (!dip.signPact(app.G, app.me.id, +id)) app.toast(`${app.world.nations[+id].name} saldırmazlık paktını reddetti.`); },
-  dGuar: (app, id) => dip.guarantee(app.G, app.me.id, +id),
-  dJoin: (app, fid) => dip.joinFaction(app.G, app.me, +fid),
-  dInvite: (app, id) => { const o = app.G.S.C[+id]; if (o.op[app.me.id] >= 10 || o._atWar || app.G.S.tension >= 30) dip.joinFaction(app.G, o, app.me.faction); else app.toast(`${app.world.nations[+id].name} daveti reddetti: ilişkiler yeterince iyi değil.`); },
-  dCreate: (app) => { if (app.me.pp >= 80) { app.me.pp -= 80; dip.createFaction(app.G, app.me, FACTION_NAMES[app.me.ideo]); } },
-  dJustify: (app, id) => dip.startJustify(app.G, app.me.id, +id, false),
-  dJustifyFree: (app, id) => dip.startJustify(app.G, app.me.id, +id, true),
-  dWar: (app, id) => app.confirm({ kicker: 'Savaş ilanı', title: `${app.world.nations[+id].name} devletine savaş ilan edilsin mi?`, text: 'Müttefikleri ve bağımsızlığını garanti edenler de savaşa girer. Bu karar geri alınamaz.', yes: 'Savaş ilan et', war: true }, () => dip.declareWar(app.G, app.me.id, +id)),
-  peace: (app, id) => { if (!dip.offerPeace(app.G, app.me.id, +id)) app.toast(`${app.world.nations[+id].name} barış teklifini reddetti.`); },
+  dImprove: (app, id) => app.cmd('dImprove', +id),
+  dPact: (app, id) => app.cmd('dPact', +id),
+  dGuar: (app, id) => app.cmd('dGuar', +id),
+  dJoin: (app, fid) => app.cmd('dJoin', +fid),
+  dInvite: (app, id) => app.cmd('dInvite', +id),
+  dCreate: (app) => app.cmd('dCreate'),
+  dJustify: (app, id) => app.cmd('dJustify', +id),
+  dJustifyFree: (app, id) => app.cmd('dJustifyFree', +id),
+  dWar: (app, id) => app.confirm({ kicker: 'Savaş ilanı', title: `${app.world.nations[+id].name} devletine savaş ilan edilsin mi?`, text: 'Müttefikleri ve bağımsızlığını garanti edenler de savaşa girer. Bu karar geri alınamaz.', yes: 'Savaş ilan et', war: true }, () => app.cmd('dWar', +id)),
+  peace: (app, id) => app.cmd('peace', +id),
   save: (app) => app.save(true),
   load: (app) => app.loadSave(),
-  toStart: (app) => app.confirm({ kicker: 'Ana menü', title: 'Oyundan çıkılsın mı?', text: 'Kaydedilmemiş ilerleme kaybolur.', yes: 'Ana menüye dön' }, () => app.toStart()),
+  toStart: (app) => app.confirm({ kicker: 'Ana menü', title: 'Oyundan çıkılsın mı?', text: app.mp ? 'Çevrim içi oturum kapanır.' : 'Kaydedilmemiş ilerleme kaybolur.', yes: 'Ana menüye dön' }, () => { if (app.mp) app.mpLeave(true); app.toStart(); }),
 };
-
-export function afterAct(app) { refreshAll(app.G); }

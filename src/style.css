@@ -189,7 +189,7 @@ button.unit:hover { border-color: var(--accent); }
 #modes { display: flex; gap: 3px; flex-wrap: wrap; justify-content: flex-end; }
 #modes .btn { padding: 3px 9px; font-size: 13px; background: rgba(13, 22, 27, 0.92); }
 #modes .btn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-#minimap { width: 236px; height: 148px; border: 1px solid var(--line); background: var(--ink); display: block; cursor: crosshair; border-radius: 2px; }
+#minimap { width: 236px; height: 118px; border: 1px solid var(--line); background: var(--ink); display: block; cursor: crosshair; border-radius: 2px; }
 #tooltip { position: fixed; z-index: 50; max-width: 280px; background: #0c161b; border: 1px solid var(--accent); border-radius: 3px; padding: 6px 9px; font-size: 13px; pointer-events: none; white-space: pre-line; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); }
 #selbox { position: absolute; border: 1px solid var(--accent); background: rgba(79, 209, 184, 0.12); pointer-events: none; }
 #banner { position: absolute; top: calc(var(--top-h) + 46px); left: 50%; transform: translateX(-50%); background: rgba(6, 35, 29, 0.96); border: 1px solid var(--accent); color: var(--accent); padding: 6px 14px; border-radius: 3px; font-weight: 600; display: flex; gap: 12px; align-items: center; max-width: calc(100% - 32px); }
@@ -216,6 +216,7 @@ button.unit:hover { border-color: var(--accent); }
 .st-right { width: min(360px, 100%); align-self: flex-end; background: rgba(13, 22, 27, 0.94); border: 1px solid var(--line); border-radius: 3px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; max-height: 100%; overflow-y: auto; }
 .st-right h2 { margin: 0; font-family: var(--font-display); font-size: 28px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1; }
 .seed { display: flex; gap: 6px; }
+.code { font-family: var(--font-display); font-size: 22px; letter-spacing: 0.14em; color: var(--accent); user-select: all; -webkit-user-select: all; margin-left: 6px; }
 .seed input { flex: 1; min-width: 0; background: var(--ink); border: 1px solid var(--line); color: var(--text); font: inherit; padding: 5px 8px; border-radius: 3px; }
 #loading { position: absolute; inset: 0; display: grid; place-items: center; background: var(--ink); z-index: 60; }
 #loading .box { width: min(420px, calc(100% - 48px)); display: flex; flex-direction: column; gap: 10px; }

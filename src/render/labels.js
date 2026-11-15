@@ -42,13 +42,14 @@ export class LabelLayer {
     const items = [];
     for (let p = 0; p < W.NL; p++) {
       const P = W.prov[p];
-      if (!P.city) continue;
-      const n = Math.min(12, 3 + Math.floor(P.vp / 3));
+      if (!P.city || P.vp < 2) continue;
+      const n = Math.min(10, 2 + Math.floor(P.vp / 3));
+      const k = Math.min(1, Math.sqrt(P.area) / 46); // küçük eyalette küçük şehir
       for (let i = 0; i < n; i++) {
-        const a = rng.next() * Math.PI * 2, r = (i === 0 ? 0 : 3 + rng.next() * 9) * (P.vp >= 20 ? 1.3 : 1);
-        const x = P.cx + Math.cos(a) * r, z = P.cy + Math.sin(a) * r + 9;
+        const a = rng.next() * Math.PI * 2, r = (i === 0 ? 0 : 2 + rng.next() * 7) * k * (P.vp >= 20 ? 1.3 : 1);
+        const x = P.cx + Math.cos(a) * r, z = P.cy + Math.sin(a) * r + 5 * k;
         const tall = i === 0 && P.vp >= 20;
-        items.push({ x, z, w: 1.8 + rng.next() * 2.2, d: 1.8 + rng.next() * 2.2, h: tall ? 9 + rng.next() * 3 : 1.6 + rng.next() * (2 + P.vp * 0.18), rot: rng.next() * Math.PI, shade: rng.next() });
+        items.push({ x, z, w: (1.4 + rng.next() * 1.8) * k, d: (1.4 + rng.next() * 1.8) * k, h: (tall ? 7 + rng.next() * 2 : 1.3 + rng.next() * (1.6 + P.vp * 0.14)) * k, rot: rng.next() * Math.PI, shade: rng.next() });
       }
     }
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -72,11 +73,12 @@ export class LabelLayer {
     this.cityLabels = [];
     for (let p = 0; p < W.NL; p++) {
       const P = W.prov[p];
-      if (!P.city) continue;
       const cap = P.capitalOf !== undefined;
-      const sp = textSprite((cap ? '★ ' : '') + P.name, { size: cap ? 17 : 14, weight: cap ? 700 : 600, color: cap ? '#fff3c4' : '#f2efe2' });
+      if (!P.city || (!cap && P.vp < 3)) continue;
+      const sp = textSprite((cap ? '★ ' : '') + P.name, { size: cap ? 16 : 13, weight: cap ? 700 : 600, color: cap ? '#fff3c4' : '#f2efe2' });
       sp.center.set(0.5, 1);
-      sp.position.set(P.cx, heightAt(W, P.cx, P.cy + 9) + 1, P.cy + 19);
+      const off = Math.min(12, Math.sqrt(P.area) / 4);
+      sp.position.set(P.cx, heightAt(W, P.cx, P.cy + off) + 1, P.cy + off);
       sp.renderOrder = 6;
       sp.userData.cap = cap;
       this.group.add(sp); this.cityLabels.push(sp);
@@ -87,84 +89,105 @@ export class LabelLayer {
   rebuildCountryLabels(G) {
     const S = G.S, W = this.world, P = W.prov, NL = W.NL;
     const seen = new Uint8Array(NL);
-    const best = new Map();
+    const picks = [];
+    const main = new Map();
     for (let p = 0; p < NL; p++) {
       if (seen[p]) continue;
       const k = S.ctrl[p];
       const comp = [p]; seen[p] = 1;
-      let area = 0;
-      for (let h = 0; h < comp.length; h++) { const u = comp[h]; area += P[u].area; for (const v of P[u].nb) if (!seen[v] && S.ctrl[v] === k) { seen[v] = 1; comp.push(v); } }
-      const b = best.get(k);
-      if (!b || area > b.area) best.set(k, { area, comp });
+      let area = 0, hasCap = false;
+      for (let h = 0; h < comp.length; h++) { const u = comp[h]; area += P[u].area; if (u === S.C[k].capital) hasCap = true; for (const v of P[u].nb) if (v < NL && !seen[v] && S.ctrl[v] === k) { seen[v] = 1; comp.push(v); } }
+      const item = { k, comp, area, hasCap, key: k + ':' + p };
+      if (hasCap) main.set(k, item); else if (area >= 16000) picks.push(item);
+      else if (!main.has(k) && (!item.alt || area > item.alt)) { const cur = main.get('alt' + k); if (!cur || area > cur.area) main.set('alt' + k, item); }
     }
+    for (const [key, item] of main) { if (typeof key === 'number') picks.push(item); else if (!main.has(item.k) && item.area >= 600) picks.push(item); }
     const alive = new Set();
-    for (const [k, b] of best) {
-      if (b.comp.length < 2) continue;
-      alive.add(k);
+    for (const b of picks) {
+      const k = b.k;
       let sx = 0, sz = 0, sw = 0;
       for (const u of b.comp) { sx += P[u].cx * P[u].area; sz += P[u].cy * P[u].area; sw += P[u].area; }
       const cx = sx / sw, cz = sz / sw;
       let cxx = 0, czz = 0, cxz = 0;
       for (const u of b.comp) { const dx = P[u].cx - cx, dz = P[u].cy - cz, w = P[u].area; cxx += dx * dx * w; czz += dz * dz * w; cxz += dx * dz * w; }
-      let th = 0.5 * Math.atan2(2 * cxz, cxx - czz);
+      let th = b.comp.length > 1 ? 0.5 * Math.atan2(2 * cxz, cxx - czz) : 0;
       th = clamp(th, -0.6, 0.6);
       const ax = Math.cos(th), az = Math.sin(th);
       let mn = 1e9, mx = -1e9, pmn = 1e9, pmx = -1e9;
-      for (const u of b.comp) { const dx = P[u].cx - cx, dz = P[u].cy - cz; const a = dx * ax + dz * az, c = -dx * az + dz * ax; mn = Math.min(mn, a); mx = Math.max(mx, a); pmn = Math.min(pmn, c); pmx = Math.max(pmx, c); }
+      for (const u of b.comp) { const dx = P[u].cx - cx, dz = P[u].cy - cz, r = Math.sqrt(P[u].area) * 0.5; const a = dx * ax + dz * az, c = -dx * az + dz * ax; mn = Math.min(mn, a - r); mx = Math.max(mx, a + r); pmn = Math.min(pmn, c - r); pmx = Math.max(pmx, c + r); }
       const name = W.nations[k].name;
-      const along = mx - mn + 50, perp = pmx - pmn + 50;
-      const width = clamp(Math.min(along * 0.72, perp * 0.5 * name.length * 0.62), 70, 820);
-      const sig = `${Math.round(cx / 12)}|${Math.round(cz / 12)}|${Math.round(th * 10)}|${Math.round(width / 16)}`;
-      let lab = this.countryLabels.get(k);
+      const along = mx - mn, perp = pmx - pmn;
+      const width = clamp(Math.min(along * 0.7, perp * 0.5 * name.length * 0.6), 14, 1300);
+      const key = b.hasCap ? 'c' + k : b.key;
+      alive.add(key);
+      const sig = `${Math.round(cx / 10)}|${Math.round(cz / 10)}|${Math.round(th * 10)}|${Math.round(width / 10)}`;
+      let lab = this.countryLabels.get(key);
       if (lab && lab.sig === sig) continue;
       if (!lab) {
-        const cv = document.createElement('canvas');
-        cv.width = 1024; cv.height = 150;
-        const g = cv.getContext('2d');
-        g.font = '800 104px "Big Shoulders Display", "Arial Narrow", sans-serif';
-        g.textBaseline = 'middle';
-        const txt = name.toLocaleUpperCase('tr');
-        const widths = [...txt].map((ch) => g.measureText(ch).width);
-        const total = widths.reduce((a, b) => a + b, 0);
-        const gap = Math.max(4, (960 - total) / Math.max(1, txt.length - 1));
-        let x = (1024 - (total + gap * (txt.length - 1))) / 2;
-        g.fillStyle = 'rgba(16,22,26,1)';
-        [...txt].forEach((ch, i) => { g.fillText(ch, x, 80); x += widths[i] + gap; });
-        const tex = new THREE.CanvasTexture(cv);
-        tex.minFilter = THREE.LinearMipmapLinearFilter; tex.anisotropy = 4;
-        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, opacity: 0.5 }));
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: this.nameTexture(name), transparent: true, depthTest: false, depthWrite: false, opacity: 0.5 }));
         mesh.rotation.order = 'YXZ'; mesh.rotation.x = -Math.PI / 2; mesh.renderOrder = 3;
         this.group.add(mesh);
         lab = { mesh };
-        this.countryLabels.set(k, lab);
+        this.countryLabels.set(key, lab);
       }
-      lab.sig = sig;
-      lab.mesh.position.set(cx, 48, cz);
+      lab.sig = sig; lab.width = width;
+      lab.mesh.position.set(cx, 7, cz);
       lab.mesh.rotation.y = -th;
       lab.mesh.scale.set(width, width * (150 / 1024), 1);
     }
-    for (const [k, lab] of this.countryLabels) if (!alive.has(k)) { this.group.remove(lab.mesh); lab.mesh.material.map.dispose(); lab.mesh.material.dispose(); this.countryLabels.delete(k); }
+    for (const [key, lab] of this.countryLabels) if (!alive.has(key)) { this.group.remove(lab.mesh); lab.mesh.material.dispose(); this.countryLabels.delete(key); }
     this.dirty = false;
   }
 
+  nameTexture(name) {
+    if (!this.nameTex) this.nameTex = new Map();
+    let tex = this.nameTex.get(name);
+    if (tex) return tex;
+    const cv = document.createElement('canvas');
+    cv.width = 1024; cv.height = 150;
+    const g = cv.getContext('2d');
+    g.font = '800 104px "Big Shoulders Display", "Arial Narrow", sans-serif';
+    g.textBaseline = 'middle';
+    const txt = name.toLocaleUpperCase('tr');
+    const chars = [...txt];
+    const widths = chars.map((ch) => g.measureText(ch).width);
+    const total = widths.reduce((a, b) => a + b, 0);
+    const gap = Math.max(4, Math.min(60, (960 - total) / Math.max(1, chars.length - 1)));
+    const full = total + gap * (chars.length - 1);
+    const sc = Math.min(1, 980 / full);
+    g.translate(512, 0); g.scale(sc, 1); g.translate(-full / 2, 0);
+    let x = 0;
+    g.fillStyle = 'rgba(16,22,26,1)';
+    chars.forEach((ch, i) => { g.fillText(ch, x, 80); x += widths[i] + gap; });
+    tex = new THREE.CanvasTexture(cv);
+    tex.minFilter = THREE.LinearMipmapLinearFilter; tex.anisotropy = 4;
+    this.nameTex.set(name, tex);
+    return tex;
+  }
+
   clearCountryLabels() {
-    for (const lab of this.countryLabels.values()) { this.group.remove(lab.mesh); lab.mesh.material.map.dispose(); lab.mesh.material.dispose(); }
+    for (const lab of this.countryLabels.values()) { this.group.remove(lab.mesh); lab.mesh.material.dispose(); }
     this.countryLabels.clear();
+    if (this.nameTex && this.fontsReady && !this.texCleared) { for (const t of this.nameTex.values()) t.dispose(); this.nameTex.clear(); this.texCleared = true; }
   }
 
   update() {
     const map = this.map, dist = map.cam.dist;
     const polit = map.mode !== 'ter';
-    const op = polit ? clamp((dist - 330) / 500, 0, 1) * 0.52 : 0;
-    for (const lab of this.countryLabels.values()) { lab.mesh.visible = op > 0.02; lab.mesh.material.opacity = op; }
+    // etiket, ekranda okunabilir boyuttayken görünür: küçük ülkeler yakından, büyükler uzaktan
+    for (const lab of this.countryLabels.values()) {
+      const px = (lab.width / dist) * 1000;
+      const op = polit ? clamp((px - 55) / 60, 0, 1) * clamp((2600 - px) / 900, 0, 1) * 0.5 : 0;
+      lab.mesh.visible = op > 0.02; lab.mesh.material.opacity = op;
+    }
     const s = clamp(1.25 - dist / 1500, 0.6, 1.05);
     for (const sp of this.cityLabels) {
-      const vis = dist < (sp.userData.cap ? 1250 : 760);
+      const vis = dist < (sp.userData.cap ? 900 : 430);
       sp.visible = vis;
       if (!vis) continue;
       const sy = map.pxScale(sp.userData.px * s);
       sp.scale.set(sy * sp.userData.aspect, sy, 1);
     }
-    this.cityMesh.visible = dist < 1500;
+    this.cityMesh.visible = dist < 900;
   }
 }

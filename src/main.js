@@ -1,19 +1,20 @@
-// Meridyen Harekâtı — giriş noktası: dünya kurulumu, girdi, oyun döngüsü, kayıt.
+// Meridyen Harekâtı — giriş noktası: dünya kurulumu, girdi, oyun döngüsü, kayıt ve çok oyunculu eşitleme.
 import THREE from './three.js';
 import { generateWorld, heightAt } from './worldgen.js';
 import { dateOf, BUILDING } from './data.js';
 import { Game } from './sim/game.js';
-import { refreshAll } from './sim/core.js';
-import { orderMove } from './sim/military.js';
-import { endWar } from './sim/diplomacy.js';
-import { canBuild, queueBuild } from './sim/economy.js';
+import { refreshAll, vpShare, recalcMods } from './sim/core.js';
+import { canBuild } from './sim/economy.js';
+import { runCommand } from './sim/commands.js';
 import { MapView } from './render/map.js';
 import { UnitLayer } from './render/units.js';
 import { LabelLayer } from './render/labels.js';
 import { UI } from './ui/ui.js';
+import { Net, randomCode, pack, unpack } from './net.js';
 
-const SAVE_KEY = 'meridyen-save-v2', SEED_KEY = 'meridyen-seed';
+const SAVE_KEY = 'meridyen-save-v3';
 const SPEEDS = [0, 2, 6, 24, 72, 240];
+const SNAP_MS = 600;
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
@@ -23,9 +24,12 @@ const app = {
   world: null, G: null, map: null, units: null, labels: null, ui: null,
   playing: false, paused: true, speed: 3, acc: 0,
   selection: new Set(), side: null, placement: null,
-  startOpts: { player: 0, diff: 1 },
+  startOpts: { player: 8, diff: 1 },
+  mp: null, spectator: false, logSeen: 0, seenOffer: {}, defeatShown: false, winShown: false,
   keys: new Set(), mouse: { x: -1, y: -1, moved: false, over: false },
-  get me() { return this.G ? this.G.S.C[this.G.S.player] : null; },
+  get me() { return this.G && this.G.S.player >= 0 ? this.G.S.C[this.G.S.player] : null; },
+  get isGuest() { return !!this.mp && this.mp.role === 'guest'; },
+  get isHost() { return !!this.mp && this.mp.role === 'host'; },
 
   // ---------- kurulum
   async boot() {
@@ -33,22 +37,18 @@ const app = {
     this.bindGlobal();
     const hot = window.claude && window.claude.hot;
     const snap = hot && hot.data && hot.data.save ? hot.data : null;
-    let seed = store.get(SEED_KEY) || 'MERIDYEN';
-    if (snap) { try { seed = JSON.parse(snap.save).seed; } catch (e) { /* yoksay */ } }
-    await this.buildWorld(seed);
+    await this.buildWorld();
     if (snap && snap.playing) { try { this.enterGame(Game.deserialize(this.world, snap.save)); return; } catch (e) { /* yeni oyuna düş */ } }
     this.toStart();
   },
 
-  async buildWorld(seed) {
+  async buildWorld() {
     const load = document.getElementById('loading');
     const fill = load.querySelector('.bar > i'), label = load.querySelector('.step');
     load.hidden = false;
     const step = (text, p) => new Promise((res) => { label.textContent = text + '…'; fill.style.width = Math.round(p * 100) + '%'; requestAnimationFrame(() => setTimeout(res, 0)); });
-    await step('Dünya hazırlanıyor', 0.02);
-    this.world = await generateWorld(seed, step);
-    store.set(SEED_KEY, String(seed));
-    this.destroyViews();
+    await step('Dünya haritası hazırlanıyor', 0.02);
+    this.world = await generateWorld(undefined, step);
     const canvas = document.getElementById('map');
     this.map = new MapView(canvas, this.world);
     this.labels = new LabelLayer(this.map, this.world);
@@ -61,114 +61,298 @@ const app = {
     load.hidden = true;
   },
 
-  destroyViews() {
-    if (!this.map) return;
-    this.map.renderer.dispose();
-    const old = this.map.canvas, fresh = old.cloneNode(false);
-    old.replaceWith(fresh);
-    this.map = this.units = this.labels = null;
-  },
-
-  attach(G) {
+  // Yeni bir oyun nesnesini görünüme bağlar. keepView: çok oyunculu anlık görüntüde seçim ve paneller korunur.
+  attach(G, keepView) {
     this.G = G;
-    this.selection.clear(); this.side = null; this.placement = null;
-    this.units.selected = this.selection;
-    this.map.sel = -1; this.map.highlight = null;
     this.units.setGame(G);
-    this.labels.clearCountryLabels();
-    this.map.updatePalette(G);
-    this.labels.rebuildCountryLabels(G);
-    this.units.rebuild();
-    G.on('log', (e, major) => this.onLog(e, major));
-    G.on('gameOver', (kind) => this.onGameOver(kind));
-    G.on('peaceOffer', (w) => {
-      this.ui.popup({ kicker: 'Barış teklifi', title: `${w.name}: karşı taraf barış istiyor`, text: 'Cephe uzun süredir durağan. Kabul edersen savaş mevcut hatlarda biter; herkes elindeki toprağı tutar.', yes: 'Barışı kabul et', no: 'Reddet' }, () => { endWar(G, w, null); this.ui.renderAll(); });
+    if (!keepView) {
+      this.selection.clear(); this.side = null; this.placement = null;
+      this.map.sel = -1; this.map.highlight = null;
+      this.labels.clearCountryLabels();
+      this.map.updatePalette(G);
+      this.labels.rebuildCountryLabels(G);
+      this.units.rebuild();
+      this.logSeen = G.S.logSeq || 0; this.seenOffer = {}; this.defeatShown = false; this.winShown = false;
+      for (const w of G.S.wars) if (w.offer) this.seenOffer[w.id] = w.offer;
+    } else { G.mapDirty = true; G.unitsDirty = true; }
+    G.on('day', () => {
+      if (!this.playing || this.isGuest) return;
+      if (dateOf(G.S.hours).day === 1) this.save(false);
+      this.processEvents();
     });
-    G.on('day', () => { if (this.playing && dateOf(G.S.hours).day === 1) this.save(false); });
   },
 
   toStart() {
-    this.playing = false; this.paused = true;
-    const G = Game.create(this.world, { player: this.startOpts.player, diff: 1 });
+    this.playing = false; this.paused = true; this.spectator = false;
+    const G = Game.create(this.world, { player: -1, humans: [], diff: 1 });
     G.S.observer = true;
     this.attach(G);
     this.ui.setPlaying(false);
-    this.ui.closeModal();
-    this.pickNation(Math.min(this.startOpts.player, this.world.nations.length - 1));
+    this.ui.closeModal(true);
+    this.pickNation(this.startOpts.player, true);
   },
-  pickNation(id) {
+  pickNation(id, silent) {
+    const mp = this.mp;
+    if (mp && !silent) {
+      const taken = mp.role === 'host' ? mp.guestCountry : mp.hostCountry;
+      if (id === taken) { this.toast('Bu ülkeyi arkadaşın seçti.'); return; }
+      if (mp.role === 'guest') mp.net.send({ t: 'pick', country: id });
+    }
     this.startOpts.player = id;
-    this.focusNation(id, 900);
+    this.focusNation(id);
     this.ui.renderStart();
-  },
-  async newWorld(seed) {
-    await this.buildWorld(seed);
-    this.toStart();
+    if (this.isHost) this.sendLobby();
   },
   startGame() {
-    const G = Game.create(this.world, { player: this.startOpts.player, diff: this.startOpts.diff });
+    if (this.isGuest) return;
+    const humans = [this.startOpts.player];
+    if (this.isHost && this.mp.guestCountry >= 0) humans.push(this.mp.guestCountry);
+    const G = Game.create(this.world, { player: this.startOpts.player, humans, diff: this.startOpts.diff });
     this.enterGame(G);
+    if (this.isHost) { this.mp.started = true; this.sendStart(); }
     const nat = this.world.nations[G.S.player];
     this.ui.popup({
-      kicker: '1 Ocak 1930', title: `${nat.long} senin emrinde`,
-      text: 'Zaman duraklatılmış durumda. Önce bir ulusal hedef ve araştırmalar seç, inşaat kuyruğunu doldur; sonra Boşluk tuşuyla zamanı başlat. Üstteki sarı uyarılar eksikleri gösterir.',
+      kicker: '1 Ocak 1936', title: `${nat.name} senin emrinde`,
+      text: (this.mp ? 'Çevrim içi oyunda zamanı iki oyuncu da durdurup başlatabilir. ' : 'Zaman duraklatılmış durumda. ') + 'Önce bir ulusal hedef ve araştırmalar seç, inşaat kuyruğunu doldur; sonra Boşluk tuşuyla zamanı başlat. Üstteki sarı uyarılar eksikleri gösterir.',
       html: '<p class="small muted">Komşularına dikkat et: Militarist ve Kolektivist devletler birkaç yıl içinde saldırmaya başlar. Ordunu sınıra diz ya da Ordu panelinden otomatik cepheyi aç.</p>', yes: 'Göreve başla', no: 'Nasıl oynanır',
     }, null, () => this.ui.showHelp());
   },
   enterGame(G) {
     this.attach(G);
-    this.playing = true; this.paused = true; this.speed = 3; this.acc = 0;
+    this.playing = true; this.paused = true; this.speed = 3; this.acc = 0; this.spectator = false;
     this.ui.st.tab = null; this.ui.st.dipSel = -1;
     this.ui.setPlaying(true);
-    this.focusNation(G.S.player, 700);
+    if (G.S.player >= 0) this.focusNation(G.S.player);
+  },
+
+  // ---------- komutlar: tek oyunculuda yerelde, çok oyunculuda kurucuda çalışır
+  cmd(name, ...args) {
+    const G = this.G, me = this.me;
+    if (!me || !this.playing || this.spectator) return;
+    const msg = runCommand(G, me.id, name, args);
+    if (this.isGuest) this.mp.net.send({ t: 'cmd', name, args });
+    else { if (msg) this.toast(msg); if (this.isHost) this.mp.snapDue = true; }
+    this.units.dirty = true;
+  },
+
+  // ---------- çok oyunculu
+  mpHandlers() {
+    return {
+      onReady: () => { if (this.mp) { this.mp.ready = true; this.ui.renderStart(); } },
+      onOpen: () => this.mpOpen(),
+      onMessage: (m) => this.mpMessage(m),
+      onClose: () => this.mpClosed(),
+      onError: (text) => { const guest = this.isGuest; if (guest || !this.mp || !this.mp.ready) this.mpLeave(true); this.ui.popup({ kicker: 'Çevrim içi', title: 'Bağlantı kurulamadı', text }); this.ui.renderStart(); },
+    };
+  },
+  mpHost(code) {
+    if (this.mp) return;
+    this.mp = { role: 'host', code: code || randomCode(), ready: false, connected: false, guestCountry: -1, hostCountry: this.startOpts.player, started: this.playing, lastSnap: 0, seq: 0 };
+    this.mp.net = new Net(this.mpHandlers());
+    this.mp.net.host(this.mp.code);
+    if (this.playing) { this.me.human = true; this.ui.renderAll(); } else this.ui.renderStart();
+  },
+  mpJoin(code) {
+    code = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (this.mp || code.length < 4) { this.toast('Geçerli bir oda kodu yaz.'); return; }
+    this.mp = { role: 'guest', code, ready: false, connected: false, hostCountry: -1, guestCountry: -1, seq: 0 };
+    this.mp.net = new Net(this.mpHandlers());
+    this.mp.net.join(code);
+    this.ui.renderStart();
+  },
+  mpLeave(silent) {
+    const mp = this.mp;
+    if (!mp) return;
+    this.mp = null;
+    mp.net.close();
+    if (mp.role === 'guest' && this.playing) this.toStart();
+    else if (!silent) { if (this.playing) this.ui.renderAll(); else this.ui.renderStart(); }
+  },
+  mpOpen() {
+    const mp = this.mp;
+    if (!mp) return;
+    mp.connected = true; mp.lastHeard = 0; mp.net.open = true;
+    if (mp.role === 'guest') mp.net.send({ t: 'hello', v: 3 });
+    if (this.playing) this.ui.renderAll(); else this.ui.renderStart();
+  },
+  mpClosed() {
+    const mp = this.mp;
+    if (!mp) return;
+    if (mp.role === 'guest') {
+      this.mp = null; mp.net.close();
+      const was = this.playing;
+      this.toStart();
+      this.ui.popup({ kicker: 'Çevrim içi', title: 'Bağlantı koptu', text: was ? 'Kurucuyla bağlantı kesildi. Aynı oda koduyla yeniden katılabilirsin; ülken seni bekler.' : 'Oda kapandı.' });
+      return;
+    }
+    mp.connected = false;
+    if (this.playing && mp.guestCountry >= 0) {
+      const c = this.G.S.C[mp.guestCountry];
+      c.human = false; recalcMods(this.G.S, c);
+      this.toast(`Arkadaşının bağlantısı koptu. ${this.world.nations[c.id].name} yapay zekâya geçti; aynı kodla geri dönebilir.`);
+      this.ui.renderAll();
+    } else if (!this.playing) { mp.guestCountry = -1; this.ui.renderStart(); }
+  },
+  sendLobby() {
+    const mp = this.mp;
+    if (!mp || mp.role !== 'host' || !mp.connected) return;
+    mp.hostCountry = this.playing ? this.G.S.player : this.startOpts.player;
+    if (mp.guestCountry === mp.hostCountry) mp.guestCountry = -1;
+    mp.net.send({ t: 'lobby', host: mp.hostCountry, guest: mp.guestCountry, diff: this.startOpts.diff, started: this.playing });
+  },
+  async sendStart() {
+    const mp = this.mp;
+    if (!mp || !mp.connected || mp.guestCountry < 0) return;
+    const data = await pack(this.G.serialize());
+    mp.net.send({ t: 'start', you: mp.guestCountry, paused: this.paused, speed: this.speed, seq: ++mp.seq, ...data });
+  },
+  async sendSnap() {
+    const mp = this.mp;
+    if (!mp || !mp.connected || mp.guestCountry < 0 || mp.packing) return;
+    mp.packing = true; mp.snapDue = false; mp.lastSnap = performance.now();
+    try {
+      const data = await pack(this.G.serialize());
+      if (this.mp === mp && mp.connected) mp.net.send({ t: 'snap', paused: this.paused, speed: this.speed, seq: ++mp.seq, ...data });
+    } finally { mp.packing = false; }
+  },
+  async mpMessage(m) {
+    const mp = this.mp;
+    if (!mp || !m || typeof m !== 'object') return;
+    mp.lastHeard = performance.now();
+    if (m.t === 'ping') return;
+    if (mp.role === 'host') {
+      if (m.t === 'hello') {
+        if (mp.started && mp.guestCountry >= 0 && this.G.S.C[mp.guestCountry].alive) {
+          const c = this.G.S.C[mp.guestCountry];
+          c.human = true; recalcMods(this.G.S, c);
+          this.toast(`Arkadaşın yeniden bağlandı: ${this.world.nations[c.id].name}.`);
+          this.sendStart();
+        } else this.sendLobby();
+        if (this.playing) this.ui.renderAll(); else this.ui.renderStart();
+      } else if (m.t === 'pick') {
+        const id = +m.country, host = this.playing ? this.G.S.player : this.startOpts.player;
+        if (!(id >= 0 && id < this.world.nations.length) || id === host) { this.sendLobby(); return; }
+        if (this.playing) {
+          const c = this.G.S.C[id];
+          if (!c.alive || c.capit) { this.sendLobby(); return; }
+          mp.guestCountry = id; c.human = true; recalcMods(this.G.S, c);
+          for (const d of this.G.S.divs) if (d.o === id) d.auto = true;
+          this.toast(`Arkadaşın oyuna katıldı: ${this.world.nations[id].name}.`);
+          this.sendStart(); this.ui.renderAll();
+        } else { mp.guestCountry = id; this.sendLobby(); this.ui.renderStart(); }
+      } else if (m.t === 'cmd' && this.playing && mp.guestCountry >= 0) {
+        const msg = runCommand(this.G, mp.guestCountry, String(m.name), Array.isArray(m.args) ? m.args : []);
+        if (msg) mp.net.send({ t: 'toast', text: msg });
+        mp.snapDue = true; this.units.dirty = true;
+      } else if (m.t === 'time' && this.playing) {
+        if (typeof m.paused === 'boolean') this.paused = m.paused;
+        if (m.speed >= 1 && m.speed <= 5) this.speed = Math.round(m.speed);
+        mp.snapDue = true; this.ui.renderTop();
+      }
+      return;
+    }
+    // misafir
+    if (m.t === 'full') { this.mpLeave(true); this.ui.popup({ kicker: 'Çevrim içi', title: 'Oda dolu', text: 'Bu odada zaten iki oyuncu var.' }); this.ui.renderStart(); }
+    else if (m.t === 'lobby') {
+      mp.hostCountry = m.host; mp.guestCountry = m.guest; mp.started = !!m.started;
+      if (typeof m.diff === 'number') this.startOpts.diff = m.diff;
+      if (mp.guestCountry >= 0) this.startOpts.player = mp.guestCountry;
+      else if (this.startOpts.player === mp.hostCountry) this.startOpts.player = this.world.nations.findIndex((n, i) => i !== mp.hostCountry);
+      if (!this.playing) this.ui.renderStart();
+    } else if (m.t === 'toast') this.toast(String(m.text || ''));
+    else if (m.t === 'start' || m.t === 'snap') {
+      if (m.seq <= mp.seq) return;
+      let S;
+      try { S = JSON.parse(await unpack(m)); } catch (e) { return; }
+      if (this.mp !== mp || m.seq <= mp.seq) return;
+      mp.seq = m.seq;
+      if (m.t === 'start') mp.you = m.you;
+      if (mp.you === undefined) return;
+      S.player = mp.you; S.observer = this.spectator;
+      let G;
+      try { G = Game.deserialize(this.world, S); } catch (e) { this.mpLeave(true); this.toStart(); this.ui.popup({ kicker: 'Çevrim içi', title: 'Sürüm uyuşmuyor', text: 'Kurucu ile oyun sürümün farklı. İkiniz de sayfayı yenileyin.' }); return; }
+      const first = !this.playing;
+      this.paused = !!m.paused; this.speed = m.speed || 3;
+      if (first) {
+        this.enterGame(G);
+        this.paused = !!m.paused; this.speed = m.speed || 3;
+        this.ui.closeModal(true);
+        this.ui.popup({ kicker: 'Çevrim içi oyun', title: `${this.world.nations[mp.you].name} senin emrinde`, text: 'Oyunu kurucunun bilgisayarı yürütür; emirlerin anında iletilir. Zamanı ikiniz de durdurup başlatabilirsiniz.', yes: 'Göreve başla', no: 'Nasıl oynanır' }, null, () => this.ui.showHelp());
+      } else { this.attach(G, true); this.processEvents(); }
+      this.ui.renderAll();
+    }
   },
 
   // ---------- kayıt
   hasSave() { return !!store.get(SAVE_KEY); },
   save(manual) {
-    if (!this.playing || this.G.S.over === 'lose') return;
+    if (!this.playing || this.isGuest || this.G.S.observer) return;
     const ok = store.set(SAVE_KEY, this.G.serialize());
     if (manual) this.toast(ok ? 'Oyun kaydedildi.' : 'Kaydedilemedi: tarayıcı depolamaya izin vermiyor.');
   },
-  async loadSave() {
+  loadSave() {
+    if (this.isGuest) return;
     const raw = store.get(SAVE_KEY);
     if (!raw) { this.toast('Kayıt bulunamadı.'); return; }
     try {
-      const S = JSON.parse(raw);
-      if (S.seed !== this.world.seed) await this.buildWorld(S.seed);
-      this.enterGame(Game.deserialize(this.world, S));
+      const G = Game.deserialize(this.world, raw);
+      // kayıttaki diğer insan oyuncular bağlı değilse yapay zekâya geçer
+      for (const c of G.S.C) if (c.human && c.id !== G.S.player) { c.human = false; recalcMods(G.S, c); }
+      this.enterGame(G);
+      if (this.isHost) { this.mp.started = true; this.mp.guestCountry = -1; this.sendLobby(); }
       this.toast('Kayıt yüklendi.');
     } catch (e) {
-      console.error(e);
       this.ui.popup({ kicker: 'Hata', title: 'Kayıt yüklenemedi', text: 'Kayıt dosyası bozuk ya da eski bir sürüme ait. Yeni bir oyun başlatabilirsin.' });
     }
   },
 
-  // ---------- olaylar
-  onLog(e, major) {
-    if (!this.playing) return;
-    this.ui.renderLog();
-    const S = this.G.S;
-    if (!major || S.observer) return;
-    const name = this.world.nations[S.player].name;
-    if ((e.type === 'war' || e.type === 'peace') && e.text.includes(name)) {
-      this.ui.popup({ kicker: e.type === 'war' ? 'Savaş' : 'Barış', title: e.type === 'war' ? 'Cepheden haber' : 'Silahlar sustu', text: e.text, war: e.type === 'war', yes: 'Tamam', no: e.prov >= 0 ? 'Haritada göster' : '' }, null, () => this.focusProv(e.prov));
+  // ---------- olaylar: kayıt, barış önerileri, yenilgi ve zafer
+  visibleLog(e) { const me = this.me; return !e.to || (me && e.to.includes(me.id)); },
+  processEvents() {
+    const G = this.G, S = G.S, me = this.me;
+    if (!this.playing || !me) return;
+    const name = this.world.nations[me.id].name;
+    for (const e of S.log) {
+      if (e.i <= this.logSeen) continue;
+      this.logSeen = e.i;
+      if (S.observer || !e.m || !this.visibleLog(e)) continue;
+      if ((e.type === 'war' || e.type === 'peace') && e.text.includes(name)) {
+        this.ui.popup({ kicker: e.type === 'war' ? 'Savaş' : 'Barış', title: e.type === 'war' ? 'Cepheden haber' : 'Silahlar sustu', text: e.text, war: e.type === 'war', yes: 'Tamam', no: e.prov >= 0 ? 'Haritada göster' : '' }, null, () => this.focusProv(e.prov));
+      }
     }
-  },
-  onGameOver(kind) {
-    if (kind === 'lose') {
-      this.ui.popup({ kicker: 'Yenilgi', title: 'Ülken teslim oldu', text: 'Başkentin ve şehirlerin düştü. Dünyanın geri kalanının kaderini gözlemci olarak izleyebilir ya da yeni bir oyuna başlayabilirsin.', war: true, yes: 'Ana menü', no: 'Gözlemci olarak izle' },
-        () => this.toStart(), () => { this.G.S.observer = true; this.G.S.over = null; this.paused = false; this.speed = 4; this.G.unitsDirty = true; this.ui.renderAll(); });
-    } else {
+    if (S.observer) return;
+    for (const w of S.wars) {
+      if (!w.offer || this.seenOffer[w.id] === w.offer || !(w.att.includes(me.id) || w.def.includes(me.id))) continue;
+      this.seenOffer[w.id] = w.offer;
+      this.ui.popup({ kicker: 'Barış teklifi', title: `${w.name}: karşı taraf barış istiyor`, text: 'Cephe uzun süredir durağan. Kabul edersen savaş mevcut hatlarda biter; herkes elindeki toprağı tutar.', yes: 'Barışı kabul et', no: 'Reddet' }, () => this.cmd('acceptPeace', w.id));
+    }
+    if (me.capit && !this.defeatShown) {
+      this.defeatShown = true;
+      this.ui.popup({ kicker: 'Yenilgi', title: 'Ülken teslim oldu', text: 'Başkentin ve şehirlerin düştü. Dünyanın geri kalanının kaderini gözlemci olarak izleyebilir ya da ana menüye dönebilirsin.', war: true, yes: 'Gözlemci olarak izle', no: 'Ana menü' },
+        () => this.observe(), () => { if (this.mp) this.mpLeave(true); this.toStart(); });
+    } else if (!this.winShown && !me.capit && vpShare(S, me) >= 0.6) {
+      this.winShown = true;
       this.ui.popup({ kicker: 'Zafer', title: 'Dünya senin ittifakının', text: 'İttifakın dünya zafer puanlarının %60\'ını elinde tutuyor. Harekât başarıyla tamamlandı. İstersen oynamaya devam edebilirsin.', yes: 'Oynamaya devam et' });
     }
   },
+  observe() {
+    const S = this.G.S;
+    this.spectator = true; S.observer = true;
+    if (!this.isGuest) { const me = this.me; if (me) { me.human = false; recalcMods(S, me); } if (!this.mp) { this.paused = false; this.speed = 4; } }
+    this.clearSelection(); this.G.unitsDirty = true; this.ui.renderAll();
+  },
   toast(text) { this.ui.toast(text); },
-  confirm(o, onYes) { this.ui.popup({ ...o, no: 'Vazgeç' }, () => { onYes(); refreshAll(this.G); this.G.mapDirty = true; this.ui.renderAll(); }); },
+  confirm(o, onYes) { this.ui.popup({ ...o, no: 'Vazgeç' }, () => { onYes(); this.ui.renderAll(); }); },
 
   // ---------- zaman
-  setSpeed(n) { this.speed = n; this.paused = false; this.ui.renderTop(); },
-  togglePause() { this.paused = !this.paused; this.ui.renderTop(); },
+  setTime(paused, speed) {
+    this.paused = paused; this.speed = speed;
+    if (this.isGuest) this.mp.net.send({ t: 'time', paused, speed });
+    else if (this.isHost) this.mp.snapDue = true;
+    this.ui.renderTop();
+  },
+  setSpeed(n) { this.setTime(false, n); },
+  togglePause() { this.setTime(!this.paused, this.speed); },
 
   // ---------- seçim ve emirler
   selectedDivs() {
@@ -189,22 +373,19 @@ const app = {
     this.side = null; this.selChanged();
   },
   orderSelected(prov) {
-    const ds = this.selectedDivs();
-    if (!ds.length || prov < 0) return;
-    let ok = 0;
-    for (const d of ds) if (orderMove(this.G, d, prov)) { d.auto = false; ok++; }
-    if (!ok) this.toast('Oraya ulaşılamıyor: tarafsız toprak, yol yok ya da limansız deniz yolu.');
-    else {
-      const P = this.world.prov[prov];
-      this.ring.position.set(P.cx, heightAt(this.world, P.cx, P.cy) + 2.5, P.cy);
-      this.ring.userData.t = 0; this.ring.visible = true;
-    }
-    this.units.dirty = true;
+    const ids = this.selectedDivs().map((d) => d.id);
+    if (!ids.length || prov < 0) return;
+    this.cmd('move', ids, prov);
+    const P = this.world.prov[prov];
+    this.ring.position.set(P.cx, heightAt(this.world, P.cx, P.cy) + 2.5, P.cy);
+    this.ring.userData.t = 0; this.ring.visible = true;
   },
-  focusProv(p) { const P = this.world.prov[p]; if (P) this.map.focus(P.cx, P.cy, Math.min(this.map.cam.goalDist, 700)); },
-  focusNation(id, dist) {
-    const c = this.G.S.C[id], P = this.world.prov[c.capital];
-    if (P) this.map.focus(P.cx, P.cy, dist || 760);
+  focusProv(p) { const P = this.world.prov[p]; if (P) this.map.focus(P.cx, P.cy, Math.min(this.map.cam.goalDist, 520)); },
+  focusNation(id) {
+    const c = this.G.S.C[id], nat = this.world.nations[id], P = this.world.prov[c.capital >= 0 ? c.capital : nat.capital];
+    if (!P) return;
+    const core = nat.provs.filter((i) => this.world.prov[i].core === id).length;
+    this.map.focus(P.cx, P.cy, Math.max(230, Math.min(1100, 150 + Math.sqrt(core) * 120)));
   },
 
   // ---------- yerleşim kipi
@@ -222,10 +403,12 @@ const app = {
   },
   stopPlacement() { if (!this.placement) return; this.placement = null; this.map.setHighlight(null, this.G); this.ui.renderAll(); },
   placeAt(p) {
-    const pl = this.placement, c = this.me;
+    const pl = this.placement;
     if (!this.map.highlight || !this.map.highlight[p]) { this.toast('Bu eyalet uygun değil.'); return; }
-    if (pl.type === 'deploy') { c.deploy = p; this.stopPlacement(); this.toast(`Yeni tümenler ${this.world.prov[p].name} eyaletinde konuşlanacak.`); return; }
-    if (queueBuild(this.G, c, pl.type, p)) { refreshAll(this.G); this.refreshPlacement(); this.ui.renderAll(); this.toast(`${BUILDING[pl.type].name} kuyruğa eklendi: ${this.world.prov[p].name}.`); }
+    if (pl.type === 'deploy') { this.cmd('deploy', p); this.stopPlacement(); this.toast(`Yeni tümenler ${this.world.prov[p].name} eyaletinde konuşlanacak.`); return; }
+    this.cmd('build', pl.type, p);
+    this.refreshPlacement(); this.ui.renderAll();
+    this.toast(`${BUILDING[pl.type].name} kuyruğa eklendi: ${this.world.prov[p].name}.`);
   },
 
   // ---------- girdi
@@ -243,10 +426,11 @@ const app = {
       else if (k >= '1' && k <= '5') this.setSpeed(+k);
       else if (k === '+' || k === '=') this.setSpeed(Math.min(5, this.speed + 1));
       else if (k === '-') this.setSpeed(Math.max(1, this.speed - 1));
-      else if (k === 'home') this.focusNation(this.G.S.player);
+      else if (k === 'home' && this.me) this.focusNation(this.me.id);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('beforeunload', () => { if (this.mp) this.mp.net.close(); });
   },
 
   bindCanvas(canvas) {
@@ -325,7 +509,7 @@ const app = {
     const hit = this.units.hitTest(l.x, l.y);
     const ownHit = hit && hit.stack && hit.stack.rel === 'me';
     if (d.button === 2 || (d.touch && this.selection.size && !ownHit && !this.placement)) {
-      const target = hit && hit.stack ? (hit.stack.next >= 0 && hit.stack.rel !== 'me' ? hit.stack.prov : hit.stack.prov) : pk ? pk.prov : -1;
+      const target = hit && hit.stack ? hit.stack.prov : pk ? pk.prov : -1;
       if (this.selection.size) this.orderSelected(target);
       return;
     }
@@ -352,12 +536,20 @@ const app = {
     this.last = now;
     const map = this.map, G = this.G;
     if (!map || !G) return;
-    if (this.playing && !this.paused && !G.S.over) {
+    if (this.playing && !this.paused && !this.isGuest) {
       this.acc += dt * SPEEDS[this.speed];
       const t0 = performance.now();
       let n = 0;
       while (this.acc >= 1 && n < 400 && performance.now() - t0 < 16) { G.tickHour(); this.acc -= 1; n++; }
       if (this.acc > 48) this.acc = 48;
+    }
+    if (this.mp && this.mp.connected) {
+      const mp = this.mp;
+      if (mp.role === 'host' && this.playing && (mp.snapDue || (!this.paused && now - mp.lastSnap > SNAP_MS))) this.sendSnap();
+      // kalp atışı: karşı taraf 15 sn sessiz kalırsa bağlantı kopmuş sayılır
+      if (now - (mp.lastPing || 0) > 3000) { mp.lastPing = now; mp.net.send({ t: 'ping' }); }
+      if (!mp.lastHeard) mp.lastHeard = now;
+      else if (now - mp.lastHeard > 15000) { mp.lastHeard = 0; mp.net.open = false; this.mpClosed(); }
     }
     // klavye ile kaydırma
     const k = this.keys;
@@ -401,5 +593,5 @@ const app = {
 window.__app = app;
 const start = () => { app.boot().then(() => requestAnimationFrame((t) => app.frame(t))).catch((e) => { console.error(e); const l = document.getElementById('loading'); if (l) { l.hidden = false; l.querySelector('.step').textContent = 'Oyun başlatılamadı: ' + e.message; } }); };
 const hot = window.claude && window.claude.hot;
-if (hot && hot.snapshot) hot.snapshot(() => (app.playing && app.G ? { save: app.G.serialize(), playing: true } : {}));
+if (hot && hot.snapshot) hot.snapshot(() => (app.playing && app.G && !app.mp ? { save: app.G.serialize(), playing: true } : {}));
 if (hot && hot.ready) hot.ready(start); else start();

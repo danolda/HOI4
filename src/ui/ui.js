@@ -1,13 +1,12 @@
 // Arayüz kabuğu: üst şerit, ray, paneller, seçim paneli, uyarılar, kayıt, küçük harita, pencereler.
 import { IDEOLOGY, TERRAIN, BUILDING, RESOURCES, fmtDate, dateOf, MONTHS } from '../data.js';
-import { ST_IDLE, ST_MOVE, ST_RETREAT, atWar, isFriend, divStats, tplOf, DIFF, refreshAll } from '../sim/core.js';
+import { ST_MOVE, ST_RETREAT, atWar, divStats, DIFF } from '../sim/core.js';
 import * as eco from '../sim/economy.js';
 import { factionOf } from '../sim/diplomacy.js';
-import { haltDiv, destroyDiv, sweepDead } from '../sim/military.js';
 import { MAP_MODES } from '../render/map.js';
 import { MINI_W, MINI_H, MAP_W, MAP_H } from '../worldgen.js';
 import { flagURL, icon } from './flags.js';
-import { renderPanel, panelTitle, ACTS, afterAct, fmt, pct, flagImg, relChip, HELP_HTML } from './panels.js';
+import { renderPanel, panelTitle, ACTS, fmt, pct, flagImg, relChip, HELP_HTML } from './panels.js';
 
 const TABS = [['state', 'Devlet'], ['goals', 'Hedefler'], ['research', 'Araştırma'], ['production', 'Üretim'], ['build', 'İnşaat'], ['army', 'Ordu'], ['diplo', 'Diplomasi']];
 const bar = (v, cls = '') => `<div class="bar ${cls}"><i style="width:${Math.max(0, Math.min(100, v * 100)).toFixed(1)}%"></i></div>`;
@@ -93,30 +92,28 @@ export class UI {
       modalYes: () => { const fn = this.modalYes; this.closeModal(); if (fn) fn(); },
       modalNo: () => { const fn = this.modalNo; this.closeModal(); if (fn) fn(); },
       cancelPlace: () => app.stopPlacement(),
-      halt: () => { for (const d of app.selectedDivs()) { haltDiv(app.G, d); d.auto = false; } },
-      autoSel: () => { const ds = app.selectedDivs(); const on = !ds.every((d) => d.auto); for (const d of ds) d.auto = on; app.G.unitsDirty = true; },
-      disband: () => app.confirm({ kicker: 'Terhis', title: `${app.selection.size} tümen dağıtılsın mı?`, text: 'Askerler ve teçhizat depoya döner.', yes: 'Dağıt' }, () => {
-        for (const d of app.selectedDivs()) { const c = app.me, s = divStats(app.G.S, d); for (const e in s.eq) c.stock[e] += s.eq[e] * d.s; destroyDiv(app.G, d, 0); }
-        sweepDead(app.G); app.clearSelection();
-      }),
-      selOne: () => { app.selection = new Set([+arg]); app.selChanged(); },
+      halt: () => app.cmd('halt', app.selectedDivs().map((d) => d.id)),
+      autoSel: () => { const ds = app.selectedDivs(); app.cmd('autoSet', ds.map((d) => d.id), !ds.every((d) => d.auto)); },
+      disband: () => app.confirm({ kicker: 'Terhis', title: `${app.selection.size} tümen dağıtılsın mı?`, text: 'Askerler ve teçhizat depoya döner.', yes: 'Dağıt' }, () => { app.cmd('disband', app.selectedDivs().map((d) => d.id)); app.clearSelection(); }),
+      selOne: () => { app.selection = new Set([+arg]); app.units.selected = app.selection; app.selChanged(); },
       selProvAll: () => app.selectProvince(+arg),
-      quickBuild: () => { if (!eco.queueBuild(app.G, app.me, arg, +arg2)) app.toast('Bu eyalette o yapı için yer yok.'); },
-      setDeploy: () => { app.me.deploy = +arg; },
+      quickBuild: () => app.cmd('build', arg, +arg2),
+      setDeploy: () => app.cmd('deploy', +arg),
       startPick: () => app.pickNation(+arg),
-      startDiff: () => { app.startOpts.diff = +arg; this.renderStart(); },
+      startDiff: () => { if (!app.isGuest) { app.startOpts.diff = +arg; this.renderStart(); app.sendLobby(); } },
       startGo: () => app.startGame(),
-      startSeed: () => { const v = document.getElementById('seed-input').value.trim(); if (v) app.newWorld(v); },
-      startRandom: () => app.newWorld(String(Math.floor(Math.random() * 9e5) + 1e5)),
       startLoad: () => app.loadSave(),
+      mpHost: () => app.mpHost(),
+      mpJoin: () => { const el = document.getElementById('room-input'); app.mpJoin(el ? el.value : ''); },
+      mpLeave: () => app.mpLeave(),
+      mpCopy: () => { const code = app.mp ? app.mp.code : ''; const done = () => app.toast('Oda kodu kopyalandı: ' + code); try { navigator.clipboard.writeText(code).then(done, () => app.toast('Kod: ' + code)); } catch (e) { app.toast('Kod: ' + code); } },
       help: () => this.showHelp(),
-      observe: () => { app.G.S.observer = true; app.G.S.over = null; this.closeModal(); app.setSpeed(4); },
     };
     if (own[act]) own[act]();
-    else if (ACTS[act]) { ACTS[act](app, arg, arg2, el); afterAct(app); app.G.mapDirty = true; }
+    else if (ACTS[act]) ACTS[act](app, arg, arg2, el);
     this.el.tip.hidden = true;
     this.holding = false;
-    this.renderAll();
+    if (app.playing) this.renderAll();
   }
 
   setPlaying(on) {
@@ -160,7 +157,7 @@ export class UI {
     const resS = Object.keys(RESOURCES).map((k) => stat(RESOURCES[k].name, (c._bal[k] > 0 ? '+' : '') + c._bal[k], `${RESOURCES[k].name}: üretim ${c._res[k]}, ithalat ${c.imports[k]}, ihtiyaç ${c._need[k]}`, c._bal[k] < 0 ? 'bad' : '')).join('');
     const d = dateOf(S.hours);
     this.el.top.innerHTML = `
-      <button class="tb-nation" data-act="tab" data-arg="state" data-tip="Devlet panelini aç"><img src="${flagURL(nat)}" alt=""><span><b>${nat.name}</b><small>${S.observer ? 'Gözlemci' : IDEOLOGY[c.ideo].name}${f ? ' · ' + f.name : ''}</small></span></button>
+      <button class="tb-nation" data-act="tab" data-arg="state" data-tip="Devlet panelini aç"><img src="${flagURL(nat)}" alt=""><span><b>${nat.name}</b><small>${S.observer ? 'Gözlemci' : IDEOLOGY[c.ideo].name}${f ? ' · ' + f.name : ''}${app.mp ? ` · <span class="${app.mp.connected ? 'acc' : 'warn'}">${app.mp.connected ? 'çevrim içi' : 'arkadaş bekleniyor'}</span>` : ''}</small></span></button>
       <div class="tb-stats">
         ${stat('Nüfuz', `${Math.floor(c.pp)}<small>+${c._ppGain.toFixed(1).replace('.', ',')}</small>`, 'Yasalar ve diplomasi için harcanır.')}
         ${stat('İstikrar', Math.round(c.stab) + '%', 'Üretimi ve nüfuz kazancını etkiler.')}
@@ -215,7 +212,7 @@ export class UI {
   }
   renderLog() {
     const S = this.app.G.S;
-    const items = S.log.slice(-4);
+    const items = S.log.filter((e) => this.app.visibleLog(e)).slice(-4);
     this.el.log.innerHTML = this.toasts.map((t) => `<button class="warn">${t.text}</button>`).join('')
       + items.map((e) => `<button class="${e.type}" data-act="logGo" data-arg="${e.prov}"><time>${fmtDate(e.t)}</time>${e.text}</button>`).join('');
   }
@@ -341,18 +338,20 @@ export class UI {
   // ---------- pencereler
   showModal(html, onYes, onNo) {
     const app = this.app;
-    if (this.el.modal.hidden) { this.wasPaused = app.paused; app.paused = true; }
+    if (this.el.modal.hidden && !app.mp && app.playing) { this.wasPaused = app.paused; app.paused = true; this.pausedByModal = true; }
     this.modalYes = onYes; this.modalNo = onNo;
     this.el.modal.innerHTML = html;
     this.el.modal.hidden = false;
     const b = this.el.modal.querySelector('.btn.pri') || this.el.modal.querySelector('.btn');
     if (b) b.focus();
   }
-  closeModal() {
+  closeModal(all) {
+    if (all) this.queue = [];
     if (this.el.modal.hidden) return;
     this.el.modal.hidden = true;
-    this.app.paused = this.wasPaused;
+    if (this.pausedByModal) { this.pausedByModal = false; if (!this.app.mp) this.app.paused = this.wasPaused; }
     if (this.queue && this.queue.length) { const q = this.queue.shift(); this.showModal(q[0], q[1], q[2]); }
+    else if (this.app.playing) this.renderTop();
   }
   popup(o, onYes, onNo) {
     const html = `<div class="dialog ${o.war ? 'war' : ''}" role="dialog" aria-modal="true"><div class="kicker">${o.kicker || ''}</div><h2>${o.title}</h2>${o.text ? `<p>${o.text}</p>` : ''}${o.html || ''}
@@ -364,25 +363,40 @@ export class UI {
 
   // ---------- giriş ekranı
   renderStart() {
-    const app = this.app, W = app.world, S = app.G.S, o = app.startOpts;
-    const item = (n) => { const c = S.C[n.id]; return `<button class="item ${o.player === n.id ? 'sel' : ''}" data-act="startPick" data-arg="${n.id}">${flagImg(app, n.id)}<span class="grow">${n.long}</span><span class="tiny" style="color:${IDEOLOGY[n.ideo].color}">${IDEOLOGY[n.ideo].name}</span><span class="tiny muted num">${c._nProv} eyalet</span></button>`; };
+    const app = this.app, W = app.world, S = app.G.S, o = app.startOpts, mp = app.mp;
+    const taken = mp ? (mp.role === 'host' ? mp.guestCountry : mp.hostCountry) : -1;
+    const item = (n) => { const c = S.C[n.id]; return `<button class="item ${o.player === n.id ? 'sel' : ''} ${taken === n.id ? 'off' : ''}" data-act="startPick" data-arg="${n.id}">${flagImg(app, n.id)}<span class="grow">${n.name}</span>${taken === n.id ? '<span class="tiny warn">arkadaşın</span>' : `<span class="tiny" style="color:${IDEOLOGY[n.ideo].color}">${IDEOLOGY[n.ideo].name}</span>`}<span class="tiny muted num">${c._nDiv} tümen</span></button>`; };
+    const minors = W.nations.filter((x) => !x.major && S.C[x.id].alive).sort((a, b) => b.pop - a.pop);
     const n = W.nations[o.player], c = S.C[o.player];
+    let online;
+    if (!mp) online = `<div class="row" style="flex-wrap:wrap"><button class="btn" data-act="mpHost" data-tip="Bir oda kodu üretir; arkadaşın bu kodla katılır.">Oda kur</button><span class="seed" style="flex:1;min-width:150px"><input id="room-input" placeholder="Oda kodu" aria-label="Oda kodu" maxlength="12" autocomplete="off" autocapitalize="characters"><button class="btn" data-act="mpJoin">Katıl</button></span></div>
+      <div class="tiny muted">Arkadaşınla aynı dünyada iki ayrı ülkeyi yönetirsiniz. Oyunu odayı kuranın bilgisayarı yürütür.</div>`;
+    else if (mp.role === 'host') online = `<div class="row"><span class="grow">Oda kodu <b class="code">${mp.ready ? mp.code : '…'}</b></span><button class="btn sm" data-act="mpCopy">Kopyala</button><button class="btn sm" data-act="mpLeave">Kapat</button></div>
+      <div class="small ${mp.connected ? 'acc' : 'warn'}">${!mp.ready ? 'Oda açılıyor…' : mp.connected ? (mp.guestCountry >= 0 ? `Arkadaşın bağlandı: ${W.nations[mp.guestCountry].name}` : 'Arkadaşın bağlandı, ülkesini seçiyor…') : 'Kodu arkadaşına gönder; katılması bekleniyor…'}</div>`;
+    else online = `<div class="row"><span class="grow">Oda <b class="code">${mp.code}</b></span><button class="btn sm" data-act="mpLeave">Ayrıl</button></div>
+      <div class="small ${mp.connected ? 'acc' : 'warn'}">${!mp.connected ? 'Bağlanılıyor…' : mp.guestCountry < 0 ? (mp.started ? 'Oyun sürüyor. Soldan bir ülke seç, hemen katıl.' : 'Bağlandın. Soldan ülkeni seç.') : `Ülken: ${W.nations[mp.guestCountry].name}. Kurucunun oyunu başlatması bekleniyor…`}${mp.connected && mp.hostCountry >= 0 ? ` Kurucu: ${W.nations[mp.hostCountry].name}.` : ''}</div>`;
+    const guest = mp && mp.role === 'guest';
+    const prev = this.el.start.querySelector('[data-scroll="nations"]'), keepTop = prev ? prev.scrollTop : 0, roomEl = document.getElementById('room-input'), roomVal = roomEl ? roomEl.value : '';
     this.el.start.innerHTML = `
       <div class="st-left">
-        <div class="st-title"><div class="kicker">Büyük strateji · 1930</div><h1>Meridyen Harekâtı</h1><p>On altı devlet, iki kıta, tek bir dünya savaşı. Bir ulus seç; sanayini kur, ordunu eğit, ittifakını seç ve haritayı yeniden çiz.</p></div>
-        <div class="st-list"><h3>Büyük güçler</h3>${W.nations.filter((x) => x.major).map(item).join('')}<h3>Küçük devletler</h3>${W.nations.filter((x) => !x.major).map(item).join('')}</div>
+        <div class="st-title"><div class="kicker">Büyük strateji · 1936</div><h1>Meridyen Harekâtı</h1><p>Gerçek dünya haritası, altmışı aşkın devlet, yedi büyük güç. Bir ülke seç; sanayini kur, ordunu eğit, ittifakını seç ve haritayı yeniden çiz. Tek başına ya da bir arkadaşınla çevrim içi.</p></div>
+        <div class="st-list" data-scroll="nations"><h3>Büyük güçler</h3>${W.nations.filter((x) => x.major).map(item).join('')}<h3>Diğer devletler</h3>${minors.map(item).join('')}</div>
       </div>
       <div class="st-right">
-        <div class="row">${flagImg(app, n.id, 'big')}<div class="grow"><h2>${n.name}</h2><div class="small muted">${n.leader}</div></div></div>
+        <div class="row">${flagImg(app, n.id, 'big')}<div class="grow"><h2>${n.name}</h2><div class="small muted">${n.long} · başkent ${n.cap}</div></div></div>
         <div class="small"><b style="color:${IDEOLOGY[n.ideo].color}">${IDEOLOGY[n.ideo].name}.</b> ${IDEOLOGY[n.ideo].desc}</div>
         <div class="kv small"><span>Eyalet · nüfus</span><span>${c._nProv} · ${fmt(c._pop)}</span></div>
         <div class="kv small"><span>Sivil / askeri fabrika · tersane</span><span>${c._civ} / ${c._mil} · ${c._dock}</span></div>
         <div class="kv small"><span>Tümen · donanma gücü</span><span>${c._nDiv} · ${fmt(c.naval)}</span></div>
         <div class="kv small"><span>Çelik · petrol · alüminyum</span><span>${c._res.steel} · ${c._res.oil} · ${c._res.alu}</span></div>
-        <div class="sec"><h3>Zorluk</h3><div class="tabs">${DIFF.map((d, i) => `<button class="btn ${o.diff === i ? 'on' : ''}" data-act="startDiff" data-arg="${i}">${d.name}</button>`).join('')}</div></div>
-        <div class="sec"><h3>Dünya tohumu</h3><div class="seed"><input id="seed-input" value="${String(W.seed).replace(/"/g, '')}" aria-label="Dünya tohumu" maxlength="24"><button class="btn" data-act="startSeed">Üret</button><button class="btn" data-act="startRandom" data-tip="Rastgele yeni bir dünya">Rastgele</button></div></div>
-        <div class="row" style="flex-wrap:wrap"><button class="btn pri" data-act="startGo" style="flex:1;padding:9px 12px;font-size:17px">${n.name} ile başla</button></div>
-        <div class="row" style="flex-wrap:wrap">${app.hasSave() ? '<button class="btn" data-act="startLoad">Kayıtlı oyuna devam et</button>' : ''}<button class="btn" data-act="help">Nasıl oynanır</button></div>
+        <div class="sec"><h3>Zorluk</h3><div class="tabs">${DIFF.map((d, i) => `<button class="btn ${o.diff === i ? 'on' : ''} ${guest ? 'off' : ''}" data-act="${guest ? '' : 'startDiff'}" data-arg="${i}">${d.name}</button>`).join('')}</div></div>
+        <div class="sec"><h3>Çevrim içi</h3>${online}</div>
+        <div class="row" style="flex-wrap:wrap">${guest ? '<button class="btn pri off" style="flex:1;padding:9px 12px;font-size:17px">Kurucu bekleniyor</button>' : `<button class="btn pri" data-act="startGo" style="flex:1;padding:9px 12px;font-size:17px">${n.name} ile başla</button>`}</div>
+        <div class="row" style="flex-wrap:wrap">${!guest && app.hasSave() ? '<button class="btn" data-act="startLoad">Kayıtlı oyuna devam et</button>' : ''}<button class="btn" data-act="help">Nasıl oynanır</button></div>
       </div>`;
+    const list = this.el.start.querySelector('[data-scroll="nations"]');
+    if (list) list.scrollTop = keepTop;
+    const re = document.getElementById('room-input');
+    if (re && roomVal) re.value = roomVal;
   }
 }

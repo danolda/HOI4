@@ -1,10 +1,13 @@
-// Prosedürel bayraklar ve küçük SVG simgeler.
+// Bayraklar (basit şekillerle çizilir) ve küçük SVG simgeler.
 const cache = new Map();
+const hex = (c) => '#' + c;
 
 function emblem(g, kind, x, y, r, col) {
   g.fillStyle = col; g.strokeStyle = col;
   if (kind === 'disc') { g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
-  else if (kind === 'diamond') { g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r * 0.8, y); g.lineTo(x, y + r); g.lineTo(x - r * 0.8, y); g.closePath(); g.fill(); }
+  else if (kind === 'diamond') { g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r * 1.5, y); g.lineTo(x, y + r); g.lineTo(x - r * 1.5, y); g.closePath(); g.fill(); }
+  else if (kind === 'plus') { g.fillRect(x - r * 0.28, y - r, r * 0.56, r * 2); g.fillRect(x - r, y - r * 0.28, r * 2, r * 0.56); }
+  else if (kind === 'bar') { g.fillRect(x - r * 1.5, y - r * 0.14, r * 3, r * 0.28); }
   else if (kind === 'star') {
     g.beginPath();
     for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + (i * Math.PI) / 5, rr = i % 2 ? r * 0.42 : r; g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
@@ -13,11 +16,22 @@ function emblem(g, kind, x, y, r, col) {
     g.beginPath(); g.arc(x, y, r * 0.5, 0, 7); g.fill();
     g.lineWidth = r * 0.16;
     for (let i = 0; i < 12; i++) { const a = (i * Math.PI) / 6; g.beginPath(); g.moveTo(x + Math.cos(a) * r * 0.68, y + Math.sin(a) * r * 0.68); g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); g.stroke(); }
-  } else if (kind === 'gear') {
-    g.lineWidth = r * 0.3;
-    g.beginPath(); g.arc(x, y, r * 0.62, 0, 7); g.stroke();
-    for (let i = 0; i < 8; i++) { const a = (i * Math.PI) / 4; g.beginPath(); g.moveTo(x + Math.cos(a) * r * 0.7, y + Math.sin(a) * r * 0.7); g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); g.stroke(); }
+  } else if (kind === 'crescent') {
+    g.beginPath(); g.arc(x - r * 0.25, y, r, 0, 7); g.fill();
+    g.globalCompositeOperation = 'destination-out';
+    g.beginPath(); g.arc(x + r * 0.05, y, r * 0.8, 0, 7); g.fill();
+    g.globalCompositeOperation = 'source-over';
+    emblem(g, 'star', x + r * 0.75, y, r * 0.45, col);
   }
+}
+function union(g, x, y, w, h) {
+  g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
+  g.fillStyle = '#012169'; g.fillRect(x, y, w, h);
+  g.strokeStyle = '#ffffff'; g.lineWidth = h * 0.2; g.beginPath(); g.moveTo(x, y); g.lineTo(x + w, y + h); g.moveTo(x + w, y); g.lineTo(x, y + h); g.stroke();
+  g.strokeStyle = '#c8102e'; g.lineWidth = h * 0.08; g.beginPath(); g.moveTo(x, y); g.lineTo(x + w, y + h); g.moveTo(x + w, y); g.lineTo(x, y + h); g.stroke();
+  g.fillStyle = '#ffffff'; g.fillRect(x + w / 2 - h * 0.17, y, h * 0.34, h); g.fillRect(x, y + h / 2 - h * 0.17, w, h * 0.34);
+  g.fillStyle = '#c8102e'; g.fillRect(x + w / 2 - h * 0.1, y, h * 0.2, h); g.fillRect(x, y + h / 2 - h * 0.1, w, h * 0.2);
+  g.restore();
 }
 
 export function flagURL(nat) {
@@ -26,18 +40,30 @@ export function flagURL(nat) {
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  const { pat, c, em } = nat.flag;
-  g.fillStyle = c[0]; g.fillRect(0, 0, W, H);
-  let emCol = c[c.length - 1];
-  if (pat === 'hband') { for (let i = 0; i < 3; i++) { g.fillStyle = c[i]; g.fillRect(0, (H / 3) * i, W, H / 3 + 1); } emCol = c[1] === c[0] ? '#f0ead8' : c[0] === c[2] ? c[0] : '#f0ead8'; }
-  else if (pat === 'vband') { for (let i = 0; i < 3; i++) { g.fillStyle = c[i]; g.fillRect((W / 3) * i, 0, W / 3 + 1, H); } emCol = c[0]; }
-  else if (pat === 'cross') { g.fillStyle = c[1]; g.fillRect(W / 2 - 9, 0, 18, H); g.fillRect(0, H / 2 - 9, W, 18); g.fillStyle = c[2]; g.fillRect(W / 2 - 4, 0, 8, H); g.fillRect(0, H / 2 - 4, W, 8); }
-  else if (pat === 'nordic') { g.fillStyle = c[1]; g.fillRect(28, 0, 16, H); g.fillRect(0, H / 2 - 8, W, 16); g.fillStyle = c[2]; g.fillRect(33, 0, 6, H); g.fillRect(0, H / 2 - 3, W, 6); }
-  else if (pat === 'chevron') { g.fillStyle = c[1]; g.fillRect(0, H / 2 - 9, W, 18); g.fillStyle = c[2]; g.beginPath(); g.moveTo(0, 0); g.lineTo(40, H / 2); g.lineTo(0, H); g.closePath(); g.fill(); }
-  else if (pat === 'saltire') { g.strokeStyle = c[1]; g.lineWidth = 12; g.beginPath(); g.moveTo(0, 0); g.lineTo(W, H); g.moveTo(W, 0); g.lineTo(0, H); g.stroke(); }
-  else if (pat === 'quarter') { g.fillStyle = c[1]; g.fillRect(W / 2, 0, W / 2, H / 2); g.fillRect(0, H / 2, W / 2, H / 2); }
-  else if (pat === 'plain') emCol = c[1];
-  if (em && em !== 'none') emblem(g, em, W / 2, H / 2, pat === 'hband' ? 9 : 15, emCol);
+  g.fillStyle = '#888'; g.fillRect(0, 0, W, H);
+  for (const part of String(nat.flag).split('|')) {
+    const [t, a, b, c] = part.split(':');
+    const cols = (a || '').split(',').map(hex);
+    if (t === 'u') union(g, 0, 0, W, H);
+    else if (t === 's') {
+      for (let i = 0; i < 7; i++) { g.fillStyle = i % 2 ? '#ffffff' : '#b22234'; g.fillRect(0, (H / 7) * i, W, H / 7 + 1); }
+      g.fillStyle = '#3c3b6e'; g.fillRect(0, 0, W * 0.44, (H / 7) * 4);
+      g.fillStyle = '#ffffff'; for (let j = 0; j < 3; j++) for (let i = 0; i < 4; i++) { g.beginPath(); g.arc(6 + i * 10.5, 7 + j * 11.5, 1.9, 0, 7); g.fill(); }
+    } else if (t === 'h') cols.forEach((col, i) => { g.fillStyle = col; g.fillRect(0, (H / cols.length) * i, W, H / cols.length + 1); });
+    else if (t === 'v') cols.forEach((col, i) => { g.fillStyle = col; g.fillRect((W / cols.length) * i, 0, W / cols.length + 1, H); });
+    else if (t === 'p') { g.fillStyle = cols[0]; g.fillRect(0, 0, W, H); }
+    else if (t === 'q') { g.fillStyle = cols[0]; g.fillRect(0, 0, W, H); g.fillStyle = cols[1]; g.fillRect(W / 2, 0, W / 2, H / 2); g.fillRect(0, H / 2, W / 2, H / 2); }
+    else if (t === 'x') { g.fillStyle = cols[0]; g.fillRect(27, 0, 17, H); g.fillRect(0, H / 2 - 8.5, W, 17); if (cols[1]) { g.fillStyle = cols[1]; g.fillRect(32, 0, 7, H); g.fillRect(0, H / 2 - 3.5, W, 7); } }
+    else if (t === 'k') { g.fillStyle = cols[0]; g.fillRect(0, 0, W * 0.42, H * 0.5); }
+    else if (t === 'ku') union(g, 0, 0, W * 0.5, H * 0.5);
+    else if (t === 'tri') { g.fillStyle = cols[0]; g.beginPath(); g.moveTo(0, 0); g.lineTo(W * 0.42, H / 2); g.lineTo(0, H); g.closePath(); g.fill(); }
+    else if (t === 'e') {
+      const pos = c || 'c';
+      if (pos === 'tl') emblem(g, a, W * 0.21, H * 0.25, H * 0.17, hex(b));
+      else if (pos === 'r') emblem(g, a, W * 0.72, H * 0.55, H * 0.2, hex(b));
+      else emblem(g, a, W / 2, H / 2, H * 0.24, hex(b));
+    }
+  }
   const url = cv.toDataURL('image/png');
   cache.set(nat.tag, url);
   return url;

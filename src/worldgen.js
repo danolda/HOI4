@@ -1,288 +1,258 @@
-// Tohumdan dünya üretimi: eyalet rasteri, komşuluklar, arazi, yükseklik haritası, ülkeler.
+// Gerçek dünya haritasından oyun dünyası: bölge rasteri, eyaletler, komşuluklar, arazi, 1936 sınırları.
+// Tarayıcılar arasında birebir aynı sonucu vermesi için yalnızca tam belirli aritmetik kullanılır.
 import { RNG, hashString, fbm, ridge, noise2, clamp, smoothstep } from './rng.js';
-import { NATIONS, MAJORS, TERRAIN } from './data.js';
-import { MinHeap } from './heap.js';
+import { NATIONS, MAJORS } from './data.js';
+import { GEO } from './geodata.js';
 
-export const MAP_W = 2048, MAP_H = 1280;
-export const HS = 2;
+export const MAP_W = GEO.W, MAP_H = GEO.H;
+export const HS = 3;
 export const HW = MAP_W / HS, HH = MAP_H / HS;
-export const HEIGHT_SCALE = 44;
-export const MINI_W = 256, MINI_H = 160;
-const CELL_R = 46;
+export const HEIGHT_SCALE = 40;
+export const MINI_W = 256, MINI_H = 128;
+export const WORLD_SEED = 'DUNYA-1936';
+const NONE = 0xffff;
 
-function poisson(rng, W, H, r, margin) {
-  const cell = r / Math.SQRT2;
-  const gw = Math.ceil(W / cell), gh = Math.ceil(H / cell);
-  const grid = new Int32Array(gw * gh).fill(-1);
-  const px = [], py = [], active = [];
-  const add = (x, y) => {
-    const i = px.length;
-    px.push(x); py.push(y); active.push(i);
-    grid[Math.floor(y / cell) * gw + Math.floor(x / cell)] = i;
-  };
-  add(W / 2 + rng.range(-60, 60), H / 2 + rng.range(-60, 60));
-  while (active.length) {
-    const ai = Math.floor(rng.next() * active.length);
-    const i = active[ai];
-    let found = false;
-    for (let k = 0; k < 24; k++) {
-      const a = rng.next() * Math.PI * 2, d = r * (1 + rng.next());
-      const x = px[i] + Math.cos(a) * d, y = py[i] + Math.sin(a) * d;
-      if (x < margin || y < margin || x >= W - margin || y >= H - margin) continue;
-      const cx = Math.floor(x / cell), cy = Math.floor(y / cell);
-      let ok = true;
-      for (let yy = Math.max(0, cy - 2); yy <= Math.min(gh - 1, cy + 2) && ok; yy++) {
-        for (let xx = Math.max(0, cx - 2); xx <= Math.min(gw - 1, cx + 2); xx++) {
-          const j = grid[yy * gw + xx];
-          if (j >= 0) {
-            const dx = px[j] - x, dy = py[j] - y;
-            if (dx * dx + dy * dy < r * r) { ok = false; break; }
-          }
-        }
+function fillRings(buf, W, H, rings, value) {
+  let y0 = 1e9, y1 = -1e9;
+  for (const r of rings) for (let i = 1; i < r.length; i += 2) { if (r[i] < y0) y0 = r[i]; if (r[i] > y1) y1 = r[i]; }
+  const ya = Math.max(0, Math.floor(y0)), yb = Math.min(H - 1, Math.ceil(y1));
+  const xs = [];
+  for (let y = ya; y <= yb; y++) {
+    const yc = y + 0.5;
+    xs.length = 0;
+    for (const r of rings) {
+      const n = r.length;
+      for (let i = 0; i < n; i += 2) {
+        const ax = r[i], ay = r[i + 1], j = (i + 2) % n, bx = r[j], by = r[j + 1];
+        if ((ay <= yc && by > yc) || (by <= yc && ay > yc)) xs.push(ax + ((yc - ay) / (by - ay)) * (bx - ax));
       }
-      if (ok) { add(x, y); found = true; break; }
     }
-    if (!found) { active[ai] = active[active.length - 1]; active.pop(); }
+    if (xs.length < 2) continue;
+    xs.sort((a, b) => a - b);
+    const row = y * W;
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const xa = Math.max(0, Math.ceil(xs[k] - 0.5)), xb = Math.min(W - 1, Math.floor(xs[k + 1] - 0.5));
+      for (let x = xa; x <= xb; x++) buf[row + x] = value;
+    }
   }
-  return { px, py };
 }
 
-const NAME_A = ['Val', 'Kor', 'Dra', 'Mer', 'Tes', 'Hal', 'Nor', 'Zar', 'Bel', 'Tav', 'Os', 'Lum', 'Ard', 'Vos', 'Is', 'Kel', 'Sar', 'Ren', 'Tor', 'Gal', 'Mir', 'Dun', 'Fal', 'El', 'Ar', 'Or', 'Ul', 'Bran', 'Cas', 'Dor', 'Ev', 'Gor', 'Har', 'Jas', 'Kas', 'Lor', 'Mal', 'Nev', 'Pel', 'Ras', 'Sel', 'Tal', 'Var', 'Yor', 'Zel', 'Ost', 'Vey', 'Kar', 'Sil', 'Tur'];
-const NAME_B = ['an', 'en', 'in', 'or', 'ar', 'el', 'is', 'os', 'un', 'ad', 'em', 'ir', 'ov', 'ak', 'et', 'al', 'on', 'ur', 'av', 'id'];
-const NAME_C = ['', '', '', 'a', 'ia', 'os', 'um', 'en', 'ova', 'ark', 'holm', 'mar', 'kent', 'dil', 'eth', 'is', 'on', 'ya'];
-
-function makeNamer(rng) {
-  const used = new Set();
-  return () => {
-    for (let t = 0; t < 50; t++) {
-      let n = rng.pick(NAME_A) + rng.pick(NAME_B) + rng.pick(NAME_C);
-      if (rng.chance(0.18)) n = rng.pick(NAME_A) + rng.pick(NAME_B) + rng.pick(NAME_B) + rng.pick(NAME_C);
-      if (!used.has(n)) { used.add(n); return n; }
-    }
-    const n = rng.pick(NAME_A) + rng.pick(NAME_B) + used.size;
-    used.add(n);
-    return n;
-  };
+function pointInPoly(x, y, poly) {
+  let inside = false;
+  for (let i = 0, n = poly.length, j = n - 2; i < n; j = i, i += 2) {
+    const xi = poly[i], yi = poly[i + 1], xj = poly[j], yj = poly[j + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
 }
 
-export async function generateWorld(seedStr, step = async () => {}) {
-  const W = MAP_W, H = MAP_H;
+export async function generateWorld(seedStr = WORLD_SEED, step = async () => {}) {
+  const W = MAP_W, H = MAP_H, N = W * H;
   const seedNum = hashString(String(seedStr));
   const rng = new RNG(seedNum);
-  const sA = (seedNum ^ 0x51f3) | 0, sB = (seedNum ^ 0x9e21) | 0, sC = (seedNum ^ 0x1777) | 0, sD = (seedNum ^ 0x4c05) | 0;
+  const sA = (seedNum ^ 0x51f3) | 0, sD = (seedNum ^ 0x4c05) | 0;
 
-  await step('Kıtalar çiziliyor', 0.05);
-  // ---- 1. Hücre tohumları
-  const { px, py } = poisson(rng, W, H, CELL_R, 6);
-  const NC = px.length;
+  await step('Kıtalar çiziliyor', 0.04);
+  // ---- 1. Bölge rasteri (0 deniz, aksi hâlde bölge no + 1)
+  const reg = new Uint8Array(N);
+  GEO.regions.forEach((r, i) => fillRings(reg, W, H, r.rings, i + 1));
+  for (const l of GEO.lakes) fillRings(reg, W, H, [l], 0);
 
-  // ---- 2. Kara alanı
-  const blobs = [];
-  blobs.push({ x: W * rng.range(0.2, 0.32), y: H * rng.range(0.32, 0.68), r: rng.range(300, 400), a: 0.85 });
-  blobs.push({ x: W * rng.range(0.68, 0.8), y: H * rng.range(0.32, 0.68), r: rng.range(300, 400), a: 0.85 });
-  blobs.push({ x: W * rng.range(0.4, 0.6), y: H * rng.range(0.15, 0.85), r: rng.range(150, 220), a: 0.6 });
-  for (let i = 0; i < 3; i++) blobs.push({ x: W * rng.range(0.1, 0.9), y: H * rng.range(0.12, 0.88), r: rng.range(110, 190), a: 0.6 });
-  for (let i = 0; i < 2; i++) blobs.push({ x: W * rng.range(0.25, 0.75), y: H * rng.range(0.25, 0.75), r: rng.range(120, 200), a: -0.7 });
-  const chanX = W * rng.range(0.44, 0.56), chanAmp = rng.range(0.5, 0.75);
-  const landField = (x, y) => {
-    let f = fbm(x / 340, y / 340, sA, 5) * 1.5;
-    const cx = chanX + noise2(y / 260, 3.3, sA + 91) * 170;
-    f -= chanAmp * Math.exp(-Math.pow((x - cx) / 80, 2));
-    for (const b of blobs) {
-      const dx = (x - b.x) / b.r, dy = (y - b.y) / b.r;
-      f += b.a * Math.exp(-(dx * dx + dy * dy));
+  // ---- 2. Küçük parçaları temizle, bileşenleri say
+  const seen = new Uint8Array(N);
+  const stack = new Int32Array(N);
+  const flood = (start, onPix) => {
+    const g = reg[start];
+    let sp = 0, cnt = 0;
+    stack[sp++] = start; seen[start] = 1;
+    while (sp) {
+      const i = stack[--sp];
+      cnt++;
+      if (onPix) onPix(i);
+      const x = i % W;
+      if (x > 0 && !seen[i - 1] && reg[i - 1] === g) { seen[i - 1] = 1; stack[sp++] = i - 1; }
+      if (x < W - 1 && !seen[i + 1] && reg[i + 1] === g) { seen[i + 1] = 1; stack[sp++] = i + 1; }
+      if (i >= W && !seen[i - W] && reg[i - W] === g) { seen[i - W] = 1; stack[sp++] = i - W; }
+      if (i < N - W && !seen[i + W] && reg[i + W] === g) { seen[i + W] = 1; stack[sp++] = i + W; }
     }
-    const e = Math.min(x, W - x, y, H - y);
-    f -= (1 - smoothstep(0, 190, e)) * 1.3;
-    return f;
+    return cnt;
   };
-  const fieldVals = new Float32Array(NC);
-  for (let i = 0; i < NC; i++) fieldVals[i] = landField(px[i], py[i]);
-  const sorted = Array.from(fieldVals).sort((a, b) => a - b);
-  const thr = sorted[Math.floor(NC * 0.585)];
-  const cellLand = new Uint8Array(NC);
-  for (let i = 0; i < NC; i++) cellLand[i] = fieldVals[i] > thr ? 1 : 0;
-
-  await step('Eyalet sınırları çiziliyor', 0.15);
-  // ---- 3. Hücre rasteri (bükülmüş Voronoi)
-  const BS = CELL_R;
-  const bw = Math.ceil(W / BS) + 1, bh = Math.ceil(H / BS) + 1;
-  const bStart = new Int32Array(bw * bh + 1);
-  const bOf = new Int32Array(NC);
-  for (let i = 0; i < NC; i++) {
-    const b = Math.floor(py[i] / BS) * bw + Math.floor(px[i] / BS);
-    bOf[i] = b; bStart[b + 1]++;
-  }
-  for (let i = 0; i < bw * bh; i++) bStart[i + 1] += bStart[i];
-  const bFill = bStart.slice(0, bw * bh);
-  const bItems = new Int32Array(NC);
-  for (let i = 0; i < NC; i++) bItems[bFill[bOf[i]]++] = i;
-  const fpx = Float32Array.from(px), fpy = Float32Array.from(py);
-
-  const WQ = W / 4 + 2, HQ = H / 4 + 2;
-  const warpX = new Float32Array(WQ * HQ), warpY = new Float32Array(WQ * HQ);
-  for (let y = 0; y < HQ; y++) {
-    for (let x = 0; x < WQ; x++) {
-      const wx = x * 4, wy = y * 4;
-      warpX[y * WQ + x] = fbm(wx / 120, wy / 120, sB, 3) * 34 + noise2(wx / 26, wy / 26, sB + 7) * 5;
-      warpY[y * WQ + x] = fbm(wx / 120, wy / 120, sC, 3) * 34 + noise2(wx / 26, wy / 26, sC + 7) * 5;
+  const KMPP = 13.045, rowCos = GEO.rowCos;
+  const kmpp = (y) => KMPP * rowCos[clamp(y >> 3, 0, rowCos.length - 1)];
+  {
+    const pix = [];
+    for (let i = 0; i < N; i++) {
+      if (seen[i] || reg[i] === 0) continue;
+      pix.length = 0;
+      const cnt = flood(i, (p) => { if (pix.length < 400) pix.push(p); });
+      const k = kmpp((i / W) | 0);
+      if (cnt < 400 && (cnt < 20 || cnt * k * k < 1500)) for (const p of pix) reg[p] = 0;
     }
   }
 
-  const raster = new Uint16Array(W * H);
-  const BS2 = BS * BS;
-  for (let y = 0; y < H; y++) {
-    const gy = y / 4, y0 = gy | 0, fy = gy - y0;
-    for (let x = 0; x < W; x++) {
-      const gx = x / 4, x0 = gx | 0, fx = gx - x0;
-      const i00 = y0 * WQ + x0;
-      const ax = warpX[i00] + (warpX[i00 + 1] - warpX[i00]) * fx;
-      const bx2 = warpX[i00 + WQ] + (warpX[i00 + WQ + 1] - warpX[i00 + WQ]) * fx;
-      const ay = warpY[i00] + (warpY[i00 + 1] - warpY[i00]) * fx;
-      const by2 = warpY[i00 + WQ] + (warpY[i00 + WQ + 1] - warpY[i00 + WQ]) * fx;
-      const sx = x + ax + (bx2 - ax) * fy, sy = y + ay + (by2 - ay) * fy;
-      let cbx = (sx / BS) | 0, cby = (sy / BS) | 0;
-      if (cbx < 0) cbx = 0; else if (cbx >= bw) cbx = bw - 1;
-      if (cby < 0) cby = 0; else if (cby >= bh) cby = bh - 1;
-      let best = 1e12, bi = 0;
-      for (let rad = 1; rad <= 2; rad++) {
-        const ya = cby - rad < 0 ? 0 : cby - rad, yb = cby + rad >= bh ? bh - 1 : cby + rad;
-        const xa = cbx - rad < 0 ? 0 : cbx - rad, xb = cbx + rad >= bw ? bw - 1 : cbx + rad;
-        for (let yy = ya; yy <= yb; yy++) {
-          const row = yy * bw;
-          for (let xx = xa; xx <= xb; xx++) {
-            for (let k = bStart[row + xx], ke = bStart[row + xx + 1]; k < ke; k++) {
-              const j = bItems[k];
-              const dx = fpx[j] - sx, dy = fpy[j] - sy;
-              const d = dx * dx + dy * dy;
-              if (d < best) { best = d; bi = j; }
-            }
-          }
+  await step('Eyaletler bölünüyor', 0.14);
+  // ---- 3. Eyalet tohumları (değişken yoğunluklu)
+  const dens = GEO.density, defR = GEO.defaultR;
+  const spacing = (x, y) => { for (let k = 0; k < dens.length; k++) { const d = dens[k]; if (x >= d[0] && x < d[1] && y >= d[2] && y < d[3]) return d[4]; } return defR; };
+  const landR = (x, y) => clamp(spacing(x, y) / kmpp(y), 11, 140);
+  const seaR = (x, y) => clamp(clamp(spacing(x, y) * 3.2, 430, 1900) / kmpp(y), 40, 250);
+  const BK = 23, bw = Math.ceil(W / BK), bh = Math.ceil(H / BK);
+  const sx = [], sy = [], sr = [], sLand = [];
+  const buckets = Array.from({ length: bw * bh }, () => []);
+  const tryAdd = (x, y, r, land, force) => {
+    const bx = (x / BK) | 0, by = (y / BK) | 0, span = Math.ceil((r + 250) / 2 / BK);
+    if (!force) {
+      for (let yy = Math.max(0, by - span); yy <= Math.min(bh - 1, by + span); yy++) for (let xx = Math.max(0, bx - span); xx <= Math.min(bw - 1, bx + span); xx++) {
+        const b = buckets[yy * bw + xx];
+        for (let k = 0; k < b.length; k++) {
+          const j = b[k];
+          if (sLand[j] !== land) continue;
+          const dx = sx[j] - x, dy = sy[j] - y, m = (r + sr[j]) / 2;
+          if (dx * dx + dy * dy < m * m) return false;
         }
-        if (best <= BS2) break;
       }
-      raster[y * W + x] = bi;
     }
-    if ((y & 255) === 255) await step('Eyalet sınırları çiziliyor', 0.15 + 0.3 * (y / H));
+    buckets[by * bw + bx].push(sx.length);
+    sx.push(x); sy.push(y); sr.push(r); sLand.push(land);
+    return true;
+  };
+  for (let t = 0; t < 260000; t++) {
+    const x = (rng.next() * W) | 0, y = (rng.next() * H) | 0;
+    if (reg[y * W + x] === 0) continue;
+    tryAdd(x, y, landR(x, y), 1, false);
+  }
+  for (let t = 0; t < 70000; t++) {
+    const x = (rng.next() * W) | 0, y = (rng.next() * H) | 0;
+    if (reg[y * W + x] !== 0) continue;
+    tryAdd(x, y, seaR(x, y), 0, false);
+  }
+  // her kara parçasına ve her kapalı denize en az bir tohum
+  seen.fill(0);
+  for (let s = 0, n0 = sx.length; s < n0; s++) { const i = sy[s] * W + sx[s]; if (!seen[i]) flood(i, null); }
+  for (let i = 0; i < N; i++) {
+    if (seen[i]) continue;
+    let cx = 0, cy = 0;
+    const sample = [];
+    const cnt = flood(i, (p) => { cx += p % W; cy += (p / W) | 0; if (sample.length < 6000) sample.push(p); });
+    if (reg[i] === 0 && cnt < 60) continue;
+    cx /= cnt; cy /= cnt;
+    if (reg[i] !== 0) {
+      // tohum düşmeyen ada: yeterince büyük değilse denize çevir
+      const k = kmpp(cy | 0), km2 = cnt * k * k;
+      if (km2 < 6000 || (rowCos[clamp((cy | 0) >> 3, 0, rowCos.length - 1)] < 0.47 && km2 < 60000)) { if (cnt <= 6000) for (const p of sample) reg[p] = 0; else continue; continue; }
+    }
+    let best = i, bd = 1e18;
+    const g = reg[i];
+    for (const p of sample) { const d = (p % W - cx) ** 2 + (((p / W) | 0) - cy) ** 2; if (d < bd) { bd = d; best = p; } }
+    tryAdd(best % W, (best / W) | 0, g ? landR(best % W, (best / W) | 0) : 200, g ? 1 : 0, true);
+  }
+  const NS = sx.length;
+
+  await step('Sınırlar çiziliyor', 0.26);
+  // ---- 4. Etiket yayılımı: aynı bölge içinde gürültülü jeodezik Voronoi
+  const WQ = (W >> 2) + 1, HQ = (H >> 2) + 1;
+  const cost = new Float32Array(WQ * HQ);
+  for (let y = 0; y < HQ; y++) for (let x = 0; x < WQ; x++) cost[y * WQ + x] = 1 + 0.55 * fbm(x / 5.5, y / 5.5, sA, 3) + 0.25 * noise2(x / 1.7, y / 1.7, sA + 9);
+  const label = new Uint16Array(N).fill(NONE);
+  const dist = new Float32Array(N).fill(1e30);
+  for (let s = 0; s < NS; s++) { const i = sy[s] * W + sx[s]; label[i] = s; dist[i] = 0; }
+  const D1 = 1, D2 = 1.4142;
+  for (let iter = 0; iter < 7; iter++) {
+    let changed = 0;
+    for (let y = 0; y < H; y++) {
+      const row = y * W, crow = (y >> 2) * WQ;
+      for (let x = 0; x < W; x++) {
+        const i = row + x, g = reg[i], c = cost[crow + (x >> 2)];
+        let d = dist[i], l = label[i], nd;
+        if (x > 0 && reg[i - 1] === g && (nd = dist[i - 1] + D1 * c) < d) { d = nd; l = label[i - 1]; }
+        if (y > 0) {
+          if (reg[i - W] === g && (nd = dist[i - W] + D1 * c) < d) { d = nd; l = label[i - W]; }
+          if (x > 0 && reg[i - W - 1] === g && (nd = dist[i - W - 1] + D2 * c) < d) { d = nd; l = label[i - W - 1]; }
+          if (x < W - 1 && reg[i - W + 1] === g && (nd = dist[i - W + 1] + D2 * c) < d) { d = nd; l = label[i - W + 1]; }
+        }
+        if (l !== label[i]) changed++;
+        dist[i] = d; label[i] = l;
+      }
+    }
+    for (let y = H - 1; y >= 0; y--) {
+      const row = y * W, crow = (y >> 2) * WQ;
+      for (let x = W - 1; x >= 0; x--) {
+        const i = row + x, g = reg[i], c = cost[crow + (x >> 2)];
+        let d = dist[i], l = label[i], nd;
+        if (x < W - 1 && reg[i + 1] === g && (nd = dist[i + 1] + D1 * c) < d) { d = nd; l = label[i + 1]; }
+        if (y < H - 1) {
+          if (reg[i + W] === g && (nd = dist[i + W] + D1 * c) < d) { d = nd; l = label[i + W]; }
+          if (x < W - 1 && reg[i + W + 1] === g && (nd = dist[i + W + 1] + D2 * c) < d) { d = nd; l = label[i + W + 1]; }
+          if (x > 0 && reg[i + W - 1] === g && (nd = dist[i + W - 1] + D2 * c) < d) { d = nd; l = label[i + W - 1]; }
+        }
+        if (l !== label[i]) changed++;
+        dist[i] = d; label[i] = l;
+      }
+    }
+    await step('Sınırlar çiziliyor', 0.26 + 0.05 * (iter + 1));
+    if (changed < 400) break;
+  }
+  // etiketsiz kalan küçük su/kara parçaları: komşu etiketi al (önce aynı tür)
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < N; i++) {
+      if (label[i] !== NONE) continue;
+      const x = i % W, land = reg[i] !== 0;
+      let l = NONE;
+      const tryN = (j) => { if (l === NONE && label[j] !== NONE && (pass > 0 || (reg[j] !== 0) === land)) l = label[j]; };
+      if (x > 0) tryN(i - 1); if (x < W - 1) tryN(i + 1); if (i >= W) tryN(i - W); if (i < N - W) tryN(i + W);
+      if (l !== NONE) { label[i] = l; if (sLand[l] === 0) reg[i] = 0; }
+    }
+    for (let i = N - 1; i >= 0; i--) {
+      if (label[i] !== NONE) continue;
+      const x = i % W, land = reg[i] !== 0;
+      let l = NONE;
+      const tryN = (j) => { if (l === NONE && label[j] !== NONE && (pass > 0 || (reg[j] !== 0) === land)) l = label[j]; };
+      if (x > 0) tryN(i - 1); if (x < W - 1) tryN(i + 1); if (i >= W) tryN(i - W); if (i < N - W) tryN(i + W);
+      if (l !== NONE) { label[i] = l; if (sLand[l] === 0) reg[i] = 0; }
+    }
   }
 
-  await step('Komşuluklar hesaplanıyor', 0.48);
-  // ---- 4. Hücre istatistikleri ve komşuluklar
-  const cCnt = new Float64Array(NC), cSx = new Float64Array(NC), cSy = new Float64Array(NC);
-  const cEdge = new Uint8Array(NC);
-  const cellAdj = new Map();
+  await step('Komşuluklar hesaplanıyor', 0.62);
+  // ---- 5. Eyaletler: önce kara, sonra deniz
+  const seedToProv = new Int32Array(NS).fill(-1);
+  const prov = [];
+  const cnt = new Float64Array(NS), smx = new Float64Array(NS), smy = new Float64Array(NS);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const l = label[y * W + x]; if (l === NONE) continue; cnt[l]++; smx[l] += x; smy[l] += y; }
+  const mk = (s, land) => ({ id: prov.length, land, area: cnt[s], cx: smx[s] / cnt[s], cy: smy[s] / cnt[s], nb: [], nbLen: [], seaNb: [], landNb: [], region: land ? reg[sy[s] * W + sx[s]] - 1 : -1 });
+  for (let s = 0; s < NS; s++) if (sLand[s] && cnt[s] > 0 && reg[sy[s] * W + sx[s]] !== 0) { seedToProv[s] = prov.length; prov.push(mk(s, true)); }
+  const NL = prov.length;
+  for (let s = 0; s < NS; s++) if (seedToProv[s] < 0 && cnt[s] > 0) { seedToProv[s] = prov.length; prov.push(mk(s, false)); }
+  const NP = prov.length;
+  const raster = label;
+  let fallback = NL;
+  for (let i = 0; i < N; i++) { const l = raster[i]; raster[i] = l === NONE ? fallback : seedToProv[l] < 0 ? fallback : seedToProv[l]; }
+
+  const pAdj = new Map();
   for (let y = 0; y < H; y++) {
     const row = y * W;
     for (let x = 0; x < W; x++) {
       const c = raster[row + x];
-      cCnt[c]++; cSx[c] += x; cSy[c] += y;
-      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) cEdge[c] = 1;
-      if (x + 1 < W) {
-        const d = raster[row + x + 1];
-        if (d !== c) { const k = c < d ? c * NC + d : d * NC + c; cellAdj.set(k, (cellAdj.get(k) || 0) + 1); }
-      }
-      if (y + 1 < H) {
-        const d = raster[row + W + x];
-        if (d !== c) { const k = c < d ? c * NC + d : d * NC + c; cellAdj.set(k, (cellAdj.get(k) || 0) + 1); }
-      }
+      if (x + 1 < W) { const d = raster[row + x + 1]; if (d !== c) { const k = c < d ? c * NP + d : d * NP + c; pAdj.set(k, (pAdj.get(k) || 0) + 1); } }
+      if (y + 1 < H) { const d = raster[row + W + x]; if (d !== c) { const k = c < d ? c * NP + d : d * NP + c; pAdj.set(k, (pAdj.get(k) || 0) + 1); } }
     }
-  }
-  const cNb = Array.from({ length: NC }, () => []);
-  for (const [k, len] of cellAdj) {
-    const a = Math.floor(k / NC), b = k % NC;
-    if (len >= 3) { cNb[a].push(b); cNb[b].push(a); }
-  }
-  // Boş kalan hücreler (raster'da hiç pikseli yok) denize çevrilir
-  for (let i = 0; i < NC; i++) if (cCnt[i] === 0) cellLand[i] = 0;
-
-  // Göller: kenara bağlanmayan küçük su kümeleri karaya çevrilir
-  {
-    const seen = new Uint8Array(NC);
-    const q = [];
-    for (let i = 0; i < NC; i++) if (!cellLand[i] && cEdge[i]) { seen[i] = 1; q.push(i); }
-    while (q.length) { const c = q.pop(); for (const n of cNb[c]) if (!cellLand[n] && !seen[n]) { seen[n] = 1; q.push(n); } }
-    for (let i = 0; i < NC; i++) {
-      if (cellLand[i] || seen[i] || cCnt[i] === 0) continue;
-      const comp = [i]; seen[i] = 2;
-      for (let h = 0; h < comp.length; h++) for (const n of cNb[comp[h]]) if (!cellLand[n] && !seen[n]) { seen[n] = 2; comp.push(n); }
-      if (comp.length <= 3) for (const c of comp) cellLand[c] = 1;
-    }
-  }
-
-  // ---- 5. Deniz bölgeleri
-  const zoneOf = new Int32Array(NC).fill(-1);
-  const zoneSeeds = [];
-  {
-    const seaCells = [];
-    for (let i = 0; i < NC; i++) if (!cellLand[i] && cCnt[i] > 0) seaCells.push(i);
-    rng.shuffle(seaCells);
-    const minD2 = 165 * 165;
-    for (const c of seaCells) {
-      let ok = true;
-      for (const z of zoneSeeds) { const dx = px[z] - px[c], dy = py[z] - py[c]; if (dx * dx + dy * dy < minD2) { ok = false; break; } }
-      if (ok) zoneSeeds.push(c);
-    }
-    let frontier = [];
-    zoneSeeds.forEach((c, zi) => { zoneOf[c] = zi; frontier.push(c); });
-    const grow = () => {
-      while (frontier.length) {
-        const next = [];
-        for (const c of frontier) for (const n of cNb[c]) if (!cellLand[n] && zoneOf[n] < 0 && cCnt[n] > 0) { zoneOf[n] = zoneOf[c]; next.push(n); }
-        frontier = next;
-      }
-    };
-    grow();
-    for (const c of seaCells) if (zoneOf[c] < 0) { zoneOf[c] = zoneSeeds.length; zoneSeeds.push(c); frontier = [c]; grow(); }
-  }
-
-  // ---- 6. Eyaletler
-  const cellToProv = new Int32Array(NC).fill(0);
-  const prov = [];
-  for (let i = 0; i < NC; i++) {
-    if (!cellLand[i]) continue;
-    cellToProv[i] = prov.length;
-    prov.push({ id: prov.length, land: true, area: cCnt[i], cx: cSx[i] / cCnt[i], cy: cSy[i] / cCnt[i], nb: [], nbLen: [], seaNb: [], landNb: [] });
-  }
-  const NL = prov.length;
-  for (let z = 0; z < zoneSeeds.length; z++) prov.push({ id: NL + z, land: false, area: 0, cx: 0, cy: 0, nb: [], nbLen: [], seaNb: [], landNb: [], sx: 0, sy: 0 });
-  const NP = prov.length;
-  for (let i = 0; i < NC; i++) {
-    if (cellLand[i]) continue;
-    const z = zoneOf[i];
-    if (z < 0) { cellToProv[i] = NL; continue; }
-    cellToProv[i] = NL + z;
-    const p = prov[NL + z];
-    p.area += cCnt[i]; p.sx += cSx[i]; p.sy += cSy[i];
-  }
-  for (let z = NL; z < NP; z++) { const p = prov[z]; p.cx = p.sx / Math.max(1, p.area); p.cy = p.sy / Math.max(1, p.area); delete p.sx; delete p.sy; }
-  for (let i = 0, n = W * H; i < n; i++) raster[i] = cellToProv[raster[i]];
-
-  const pAdj = new Map();
-  for (const [k, len] of cellAdj) {
-    const a = cellToProv[Math.floor(k / NC)], b = cellToProv[k % NC];
-    if (a === b) continue;
-    const kk = a < b ? a * NP + b : b * NP + a;
-    pAdj.set(kk, (pAdj.get(kk) || 0) + len);
   }
   for (const [k, len] of pAdj) {
     const a = Math.floor(k / NP), b = k % NP;
     const A = prov[a], B = prov[b];
     if (A.land === B.land) {
-      if (len < 5) continue;
+      if (len < (A.land ? 3 : 4)) continue;
       A.nb.push(b); A.nbLen.push(len); B.nb.push(a); B.nbLen.push(len);
     } else {
-      if (len < 3) continue;
+      if (len < 2) continue;
       const L = A.land ? A : B, S = A.land ? B : A;
       L.seaNb.push(S.id); S.landNb.push(L.id);
     }
   }
-  // Ağırlık merkezi eyaletin içinde değilse en yakın iç piksele taşı
   for (const p of prov) {
     if (raster[(p.cy | 0) * W + (p.cx | 0)] === p.id) continue;
     let best = 1e12, bx = p.cx, by = p.cy;
-    const R = p.land ? 80 : 320;
-    const x0 = Math.max(0, (p.cx | 0) - R), x1 = Math.min(W - 1, (p.cx | 0) + R);
-    const y0 = Math.max(0, (p.cy | 0) - R), y1 = Math.min(H - 1, (p.cy | 0) + R);
+    const R = p.land ? 90 : 300;
+    const x0 = Math.max(0, (p.cx | 0) - R), x1 = Math.min(W - 1, (p.cx | 0) + R), y0 = Math.max(0, (p.cy | 0) - R), y1 = Math.min(H - 1, (p.cy | 0) + R);
     for (let y = y0; y <= y1; y += 2) for (let x = x0; x <= x1; x += 2) {
       if (raster[y * W + x] !== p.id) continue;
       const d = (x - p.cx) * (x - p.cx) + (y - p.cy) * (y - p.cy);
@@ -290,10 +260,52 @@ export async function generateWorld(seedStr, step = async () => {}) {
     }
     p.cx = bx; p.cy = by;
   }
-  for (const p of prov) p.coastal = p.land && p.seaNb.length > 0;
+  const provAtPx = (x, y, wantLand) => {
+    x = clamp(x | 0, 0, W - 1); y = clamp(y | 0, 0, H - 1);
+    let p = raster[y * W + x];
+    if (prov[p].land === wantLand) return p;
+    for (let r = 1; r <= 14; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+      p = raster[yy * W + xx];
+      if (prov[p].land === wantLand) return p;
+    }
+    return -1;
+  };
+  const link = (a, b) => { if (a < 0 || b < 0 || a === b || prov[a].nb.includes(b)) return; prov[a].nb.push(b); prov[a].nbLen.push(8); prov[b].nb.push(a); prov[b].nbLen.push(8); };
+  for (const l of GEO.seaLinks) link(provAtPx(l[0], l[1], false), provAtPx(l[2], l[3], false));
+  for (const l of GEO.landLinks) link(provAtPx(l[0], l[1], true), provAtPx(l[2], l[3], true));
+  for (const p of prov) { p.coastal = p.land && p.seaNb.length > 0; p.kmpp = kmpp(p.cy | 0); }
 
-  await step('Dağlar yükseliyor', 0.58);
-  // ---- 7. Yükseklik haritası
+  await step('Dağlar yükseliyor', 0.7);
+  // ---- 6. Yükseklik alanı
+  const elev = new Float32Array(HW * HH);
+  const bump = (t) => { const v = 1 - t * t; return v > 0 ? v * v : 0; };
+  for (const r of GEO.ranges) {
+    const w = (r.w * 1.7) / HS, pts = r.pts;
+    for (let k = 0; k + 3 < pts.length; k += 2) {
+      const ax = pts[k] / HS, ay = pts[k + 1] / HS, bx = pts[k + 2] / HS, by = pts[k + 3] / HS;
+      const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
+      const x0 = Math.max(0, Math.floor(Math.min(ax, bx) - w)), x1 = Math.min(HW - 1, Math.ceil(Math.max(ax, bx) + w));
+      const y0 = Math.max(0, Math.floor(Math.min(ay, by) - w)), y1 = Math.min(HH - 1, Math.ceil(Math.max(ay, by) + w));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const t = clamp(((x - ax) * dx + (y - ay) * dy) / l2, 0, 1);
+        const px = ax + dx * t - x, py = ay + dy * t - y;
+        const v = r.h * bump(Math.sqrt(px * px + py * py) / w);
+        const i = y * HW + x;
+        if (v > elev[i]) elev[i] = v;
+      }
+    }
+  }
+  for (const z of GEO.zones) {
+    if (z[0] !== 'high') continue;
+    const cx = z[1] / HS, cy = z[2] / HS, rx = (z[3] * 1.25) / HS, ry = (z[4] * 1.25) / HS;
+    for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(HH - 1, Math.ceil(cy + ry)); y++) for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(HW - 1, Math.ceil(cx + rx)); x++) {
+      const t = Math.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2);
+      const v = z[5] * bump(t), i = y * HW + x;
+      if (v > elev[i]) elev[i] = v;
+    }
+  }
   const height = new Float32Array(HW * HH);
   {
     const dl = new Float32Array(HW * HH), ds = new Float32Array(HW * HH);
@@ -326,20 +338,16 @@ export async function generateWorld(seedStr, step = async () => {}) {
     };
     chamfer(dl); chamfer(ds);
     const tmp = new Float32Array(HW * HH);
-    for (let y = 0; y < HH; y++) {
-      for (let x = 0; x < HW; x++) {
-        const i = y * HW + x, wx = x * HS, wy = y * HS;
-        if (dl[i] > 0) {
-          const d = dl[i];
-          const cf = smoothstep(0, 9, d), inland = 0.5 + 0.5 * smoothstep(0, 46, d);
-          const E = (0.6 * ridge(wx / 380, wy / 380, sD, 4) + 0.4 * (fbm(wx / 210, wy / 210, sD + 99, 4) * 0.5 + 0.5)) * inland;
-          const relief = Math.pow(clamp((E - 0.3) / 0.42, 0, 1), 1.8);
-          tmp[i] = cf * (0.045 + 0.955 * relief) + cf * 0.012 * noise2(wx / 14, wy / 14, sD + 5);
-        } else {
-          tmp[i] = -smoothstep(0, 70, ds[i]);
-        }
-      }
-      if ((y & 127) === 127) await step('Dağlar yükseliyor', 0.58 + 0.2 * (y / HH));
+    for (let y = 0; y < HH; y++) for (let x = 0; x < HW; x++) {
+      const i = y * HW + x;
+      if (dl[i] > 0) {
+        const cf = smoothstep(0, 3.5, dl[i]);
+        const e = elev[i];
+        const rough = 0.55 + 0.75 * ridge(x / 26, y / 26, sD, 4);
+        const base = 0.05 + 0.05 * (fbm(x / 40, y / 40, sD + 99, 3) * 0.5 + 0.5);
+        const v = clamp(base + e * rough, 0, 1);
+        tmp[i] = cf * (0.03 + 0.97 * v * Math.sqrt(v)) + cf * 0.008 * noise2(x / 3, y / 3, sD + 5);
+      } else tmp[i] = -smoothstep(0, 26, ds[i]);
     }
     for (let y = 0; y < HH; y++) for (let x = 0; x < HW; x++) {
       const i = y * HW + x;
@@ -348,196 +356,128 @@ export async function generateWorld(seedStr, step = async () => {}) {
     }
   }
 
-  await step('Uluslar kuruluyor', 0.82);
-  // ---- 8. Arazi tipleri
-  {
-    const sumH = new Float64Array(NP), cntH = new Float64Array(NP);
-    for (let y = 0; y < HH; y += 2) for (let x = 0; x < HW; x += 2) {
-      const p = raster[(y * HS + 1) * W + x * HS + 1];
-      sumH[p] += height[y * HW + x]; cntH[p]++;
-    }
-    const lands = [];
-    for (let i = 0; i < NL; i++) {
-      const p = prov[i];
-      p.elev = cntH[i] ? sumH[i] / cntH[i] : 0;
-      p.moist = fbm(p.cx / 340, p.cy / 340, sA + 4242, 3) * 0.5 + 0.5;
-      p.terrain = 'plains';
-      lands.push(p);
-    }
-    const byElev = lands.slice().sort((a, b) => b.elev - a.elev);
-    const nM = Math.round(NL * 0.09), nH = Math.round(NL * 0.17);
-    byElev.forEach((p, i) => { if (i < nM) p.terrain = 'mountain'; else if (i < nM + nH) p.terrain = 'hills'; });
-    const rest = lands.filter((p) => p.terrain === 'plains');
-    const band = (p) => { const lat = p.cy / H; return Math.exp(-Math.pow((lat - 0.72) / 0.2, 2)); };
-    const byDry = rest.slice().sort((a, b) => (1 - b.moist) * band(b) - (1 - a.moist) * band(a));
-    const nD = Math.round(NL * 0.08);
-    byDry.forEach((p, i) => { if (i < nD && (1 - p.moist) * band(p) > 0.22) p.terrain = 'desert'; });
-    const rest2 = rest.filter((p) => p.terrain === 'plains').sort((a, b) => b.moist - a.moist);
-    const nF = Math.round(NL * 0.22);
-    rest2.forEach((p, i) => { if (i < nF) p.terrain = (p.coastal && p.elev < 0.12 && i % 3 === 0) ? 'marsh' : 'forest'; });
-  }
-
-  // ---- 9. Ülkeler
-  const NN = NATIONS.length;
-  const core = new Int32Array(NP).fill(-1);
-  const comp = new Int32Array(NL).fill(-1);
-  const compSize = [];
+  await step('Devletler kuruluyor', 0.84);
+  // ---- 7. Sahiplik (1936 sınırları), arazi, şehirler
+  const inZone = (z, x, y) => ((x - z[1]) / z[3]) ** 2 + ((y - z[2]) / z[4]) ** 2 < 1;
   for (let i = 0; i < NL; i++) {
-    if (comp[i] >= 0) continue;
-    const id = compSize.length; const list = [i]; comp[i] = id;
-    for (let h = 0; h < list.length; h++) for (const n of prov[list[h]].nb) if (comp[n] < 0) { comp[n] = id; list.push(n); }
-    compSize.push(list.length);
-  }
-  const capitals = [];
-  {
-    const dist2 = (a, b) => (prov[a].cx - prov[b].cx) ** 2 + (prov[a].cy - prov[b].cy) ** 2;
-    for (let n = 0; n < NN; n++) {
-      const minComp = n < MAJORS ? 26 : 5;
-      let cands = [];
-      for (let i = 0; i < NL; i++) {
-        const p = prov[i];
-        if (compSize[comp[i]] < minComp || p.terrain === 'mountain' || p.terrain === 'desert') continue;
-        if (p.cx < 90 || p.cy < 90 || p.cx > W - 90 || p.cy > H - 90) continue;
-        let md = 1e12;
-        for (const c of capitals) md = Math.min(md, dist2(i, c));
-        if (!capitals.length) md = rng.next();
-        cands.push([md, i]);
-      }
-      if (!cands.length) { for (let i = 0; i < NL; i++) if (!capitals.includes(i)) cands.push([rng.next(), i]); }
-      cands.sort((a, b) => b[0] - a[0]);
-      capitals.push(cands[Math.floor(rng.next() * Math.min(4, cands.length))][1]);
+    const p = prov[i], R = GEO.regions[p.region];
+    p.owner0 = R.o; p.core = R.core ? R.o : -1;
+    for (const ov of GEO.overrides) {
+      if (ov.from === p.region && pointInPoly(p.cx, p.cy, ov.poly)) { p.owner0 = ov.to; p.core = ov.core ? ov.to : -1; break; }
     }
-  }
-  {
-    const TC = { plains: 1, forest: 1.3, hills: 1.6, mountain: 2.8, desert: 1.5, marsh: 1.6, urban: 1 };
-    const power = [];
-    for (let n = 0; n < NN; n++) power.push((n < MAJORS ? 1.0 : 0.4) * rng.range(0.85, 1.2));
-    const costTo = new Float64Array(NL).fill(1e12);
-    const heap = new MinHeap();
-    capitals.forEach((c, n) => { costTo[c] = 0; core[c] = n; heap.push(0, c * NN + n); });
-    const done = new Uint8Array(NL);
-    const jitter = new Float32Array(NL);
-    for (let i = 0; i < NL; i++) jitter[i] = rng.range(0.7, 1.45);
-    while (heap.size) {
-      const v = heap.pop(); const c = Math.floor(v / NN), n = v % NN; const key = heap.topKey;
-      if (done[c] || core[c] !== n || key > costTo[c] + 1e-9) continue;
-      done[c] = 1;
-      for (const q of prov[c].nb) {
-        if (done[q]) continue;
-        const nc = key + (TC[prov[q].terrain] * jitter[q]) / power[n];
-        if (nc < costTo[q]) { costTo[q] = nc; core[q] = n; heap.push(nc, q * NN + n); }
-      }
-    }
-    // Sahipsiz adalar en yakın başkente bağlanır
-    const compOwner = new Map();
-    for (let i = 0; i < NL; i++) {
-      if (core[i] >= 0) continue;
-      let o = compOwner.get(comp[i]);
-      if (o === undefined) {
-        let best = 1e18; o = 0;
-        for (let n = 0; n < NN; n++) {
-          const c = prov[capitals[n]];
-          const d = ((c.cx - prov[i].cx) ** 2 + (c.cy - prov[i].cy) ** 2) / (power[n] * power[n]);
-          if (d < best) { best = d; o = n; }
-        }
-        compOwner.set(comp[i], o);
-      }
-      core[i] = o;
-    }
-  }
-
-  // ---- 10. Şehirler, nüfus, sanayi, kaynaklar
-  const namer = makeNamer(rng);
-  const nations = NATIONS.map((n, i) => ({ ...n, id: i, major: i < MAJORS, capital: capitals[i], provs: [] }));
-  for (let i = 0; i < NL; i++) {
-    const p = prov[i];
-    p.core = core[i]; p.name = namer(); p.vp = 1; p.city = false;
+    const e = elev[clamp((p.cy / HS) | 0, 0, HH - 1) * HW + clamp((p.cx / HS) | 0, 0, HW - 1)];
+    p.elev = e;
+    p.terrain = 'plains';
+    if (e >= 0.5) p.terrain = 'mountain';
+    else if (e >= 0.22) p.terrain = 'hills';
+    else for (const z of GEO.zones) { if (z[0] !== 'high' && inZone(z, p.cx, p.cy)) { p.terrain = z[0]; break; } }
+    p.vp = 1; p.city = false; p.cityPop = 0; p.name = '';
     p.civ0 = 0; p.mil0 = 0; p.dock0 = 0; p.port0 = 0; p.fort0 = 0; p.infra0 = 1;
     p.res0 = { steel: 0, oil: 0, alu: 0 };
-    nations[core[i]].provs.push(i);
   }
-  const seaKinds = ['Denizi', 'Denizi', 'Körfezi', 'Açıkları', 'Boğazı', 'Suları'];
+  for (const c of GEO.cities) {
+    const pi = raster[clamp(c[2], 0, H - 1) * W + clamp(c[1], 0, W - 1)];
+    if (pi >= NL) continue;
+    const p = prov[pi];
+    if (c[3] > p.cityPop) { p.cityPop = c[3]; p.name = c[0]; p.city = true; }
+  }
+  const used = new Set();
+  const uniq = (n) => { let v = n, k = 2; const R = ['', '', ' II', ' III', ' IV', ' V', ' VI', ' VII', ' VIII']; while (used.has(v)) v = n + (R[k] || ' ' + k), k++; used.add(v); return v; };
+  for (let i = 0; i < NL; i++) if (prov[i].name) used.add(prov[i].name);
+  for (let i = 0; i < NL; i++) {
+    const p = prov[i];
+    if (p.name) continue;
+    let bd = 1e18, bc = null;
+    for (const c of GEO.cities) { const d = (c[1] - p.cx) ** 2 + (c[2] - p.cy) ** 2; if (d < bd) { bd = d; bc = c; } }
+    const dx = p.cx - bc[1], dy = p.cy - bc[2];
+    p.name = uniq(bc[0] + (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? ' Doğusu' : ' Batısı') : dy > 0 ? ' Güneyi' : ' Kuzeyi'));
+  }
   for (let i = NL; i < NP; i++) {
     const p = prov[i];
-    p.core = -1; p.terrain = 'sea';
-    p.name = namer() + ' ' + (p.area > 60000 ? 'Okyanusu' : rng.pick(seaKinds));
-  }
-  for (const nat of nations) {
-    const list = nat.provs;
-    const cap = prov[nat.capital];
-    cap.vp = nat.major ? 30 : 20; cap.city = true; cap.capitalOf = nat.id; cap.terrain = 'urban';
-    const nCities = clamp(Math.round(list.length / 7), 1, 6);
-    const chosen = [nat.capital];
-    for (let k = 0; k < nCities; k++) {
-      let best = -1, bi = -1;
-      for (const i of list) {
-        if (chosen.includes(i)) continue;
-        const p = prov[i];
-        let md = 1e12;
-        for (const c of chosen) md = Math.min(md, (prov[c].cx - p.cx) ** 2 + (prov[c].cy - p.cy) ** 2);
-        const tw = p.terrain === 'plains' ? 1.4 : p.terrain === 'mountain' || p.terrain === 'desert' ? 0.35 : 0.9;
-        const s = Math.sqrt(md) * tw * (p.coastal ? 1.25 : 1) * rng.range(0.8, 1.2);
-        if (s > best) { best = s; bi = i; }
-      }
-      if (bi < 0) break;
-      chosen.push(bi);
-      const p = prov[bi];
-      p.city = true; p.vp = rng.int(5, nat.major ? 15 : 10);
-      if (p.vp >= 10) p.terrain = 'urban';
-    }
-    nat.cities = chosen;
-    for (const i of list) {
-      const p = prov[i];
-      p.pop0 = Math.round(TERRAIN[p.terrain === 'urban' ? 'plains' : p.terrain].pop * rng.range(0.6, 1.4) * 1000 + (p.city ? p.vp * 90000 : 0) + (p.capitalOf !== undefined ? 1200000 : 0));
-      p.infra0 = p.capitalOf !== undefined ? 4 : p.city ? 3 : (p.terrain === 'plains' ? 2 : 1) + (rng.chance(0.25) ? 1 : 0);
-      p.slots0 = clamp(2 + Math.floor(p.pop0 / 500000), 2, 9) + (p.capitalOf !== undefined ? 4 : p.city ? 2 : 0);
-    }
-    const size = list.length;
-    let civ = nat.major ? 15 + size * 0.24 : 3 + size * 0.3;
-    let mil = nat.major ? 6 + size * 0.14 : 1.2 + size * 0.15;
-    if (nat.ideo === 'mil') mil *= 1.3;
-    if (nat.ideo === 'kol') mil *= 1.15;
-    if (nat.ideo === 'dem') civ *= 1.15;
-    const coastalList = list.filter((i) => prov[i].coastal);
-    let dock = coastalList.length ? (nat.major ? rng.int(2, 5) : rng.int(0, 2)) : 0;
-    const weights = list.map((i) => (prov[i].city ? prov[i].vp + 2 : 0.5));
-    const pickW = (filter) => {
-      let tot = 0;
-      for (let k = 0; k < list.length; k++) if (!filter || filter(prov[list[k]])) tot += weights[k];
-      if (tot <= 0) return -1;
-      let r = rng.next() * tot;
-      for (let k = 0; k < list.length; k++) {
-        if (filter && !filter(prov[list[k]])) continue;
-        r -= weights[k]; if (r <= 0) return list[k];
-      }
-      return -1;
-    };
-    const free = (p) => p.civ0 + p.mil0 + p.dock0 < p.slots0;
-    for (let k = Math.round(civ); k > 0; k--) { const i = pickW(free); if (i >= 0) prov[i].civ0++; }
-    for (let k = Math.round(mil); k > 0; k--) { const i = pickW(free); if (i >= 0) prov[i].mil0++; }
-    for (let k = dock; k > 0; k--) { const i = pickW((p) => p.coastal && free(p)); if (i >= 0) prov[i].dock0++; }
-    for (const i of coastalList) { const p = prov[i]; if (p.city || p.dock0 > 0) p.port0 = 1; }
-    if (coastalList.length && !coastalList.some((i) => prov[i].port0)) prov[rng.pick(coastalList)].port0 = 1;
-    for (let k = 0; k < 1 + (nat.major ? 1 : 0); k++) if (coastalList.length) prov[rng.pick(coastalList)].port0 = 1;
-    // Kaynaklar
-    const give = (key, total, pref) => {
-      let left = Math.round(total), guard = 0;
-      while (left > 0 && guard++ < 40) {
-        const cands = list.filter((i) => pref.includes(prov[i].terrain));
-        const i = cands.length && rng.chance(0.8) ? rng.pick(cands) : rng.pick(list);
-        const amt = Math.min(left, rng.int(3, 12));
-        prov[i].res0[key] += amt; left -= amt;
-      }
-    };
-    give('steel', (nat.major ? 14 : 5) + size * rng.range(0.5, 1.3), ['hills', 'mountain']);
-    give('oil', rng.chance(nat.major ? 0.45 : 0.25) ? rng.range(14, 36) : rng.range(0, 7), ['desert', 'plains', 'marsh']);
-    give('alu', rng.chance(0.55) ? rng.range(8, 24) : rng.range(0, 6), ['hills', 'forest', 'mountain']);
+    p.owner0 = -1; p.core = -1; p.terrain = 'sea';
+    let bd = 1e18, bn = 'Açık Deniz';
+    for (const sea of GEO.seas) { const d = (sea[1] - p.cx) ** 2 + (sea[2] - p.cy) ** 2; if (d < bd) { bd = d; bn = sea[0]; } }
+    p.name = uniq(bn);
   }
 
-  // Kıyıya uzaklık (sıçrama sayısı) — yapay zekâ için
+  // ---- 8. Uluslar ve başlangıç değerleri
+  const nations = NATIONS.map((n, i) => ({ ...n, id: i, major: i < MAJORS, provs: [], capital: -1 }));
+  for (let i = 0; i < NL; i++) nations[prov[i].owner0].provs.push(i);
+  // kara parçaları (liman dağıtımı için)
+  const comp = new Int32Array(NL).fill(-1);
+  let nComp = 0;
+  for (let i = 0; i < NL; i++) {
+    if (comp[i] >= 0) continue;
+    const list = [i]; comp[i] = nComp;
+    for (let h = 0; h < list.length; h++) for (const q of prov[list[h]].nb) if (q < NL && comp[q] < 0) { comp[q] = nComp; list.push(q); }
+    nComp++;
+  }
+  for (const nat of nations) {
+    const cap = GEO.caps[nat.id];
+    let ci = provAtPx(cap[0], cap[1], true);
+    if (ci < 0 || prov[ci].owner0 !== nat.id) {
+      let bd = 1e18; ci = -1;
+      for (const i of nat.provs) { const p = prov[i]; if (p.core !== nat.id) continue; const d = (p.cx - cap[0]) ** 2 + (p.cy - cap[1]) ** 2; if (d < bd) { bd = d; ci = i; } }
+      if (ci < 0 && nat.provs.length) ci = nat.provs[0];
+    }
+    nat.capital = ci;
+    if (ci < 0) continue;
+    const C = prov[ci];
+    used.delete(C.name); C.name = nat.cap; C.city = true; C.capitalOf = nat.id;
+    C.cityPop = Math.max(C.cityPop, nat.major ? 3000 : 800);
+    const coreList = nat.provs.filter((i) => prov[i].core === nat.id);
+    const wOf = (p) => 1 + Math.min(8, p.cityPop / 450) + (p.capitalOf !== undefined ? 2 : 0);
+    let wSum = 0;
+    for (const i of coreList) wSum += wOf(prov[i]);
+    for (const i of nat.provs) {
+      const p = prov[i], core = p.core === nat.id;
+      const big = p.cityPop;
+      p.vp = p.capitalOf !== undefined ? (nat.major ? 30 : nat.pop >= 5 ? 20 : 10) : big >= 5000 ? 10 : big >= 2000 ? 7 : big >= 1000 ? 5 : big >= 400 ? 3 : big >= 150 ? 2 : 1;
+      if (!core && p.vp > 5) p.vp = 5;
+      p.pop0 = core ? Math.round((nat.pop * 1e6 * wOf(p)) / wSum) : Math.round(250000 + Math.min(3e6, big * 120));
+      p.infra0 = p.capitalOf !== undefined ? 4 : core ? (big >= 500 ? 3 : 2) : 1;
+      p.slots0 = core ? Math.round(2.5 + wOf(p) * 0.9) : 2;
+      if (big >= 3500 && p.terrain !== 'mountain') p.terrain = 'urban';
+    }
+    const weights = coreList.map((i) => wOf(prov[i]) ** 1.6);
+    const pickW = (filter) => {
+      let tot = 0;
+      for (let k = 0; k < coreList.length; k++) if (!filter || filter(prov[coreList[k]])) tot += weights[k];
+      if (tot <= 0) return -1;
+      let r = rng.next() * tot;
+      for (let k = 0; k < coreList.length; k++) { if (filter && !filter(prov[coreList[k]])) continue; r -= weights[k]; if (r <= 0) return coreList[k]; }
+      return coreList[coreList.length - 1];
+    };
+    const put = (key, n, filter) => {
+      for (let k = 0; k < n; k++) {
+        let i = pickW(filter);
+        if (i < 0) i = pickW(null);
+        if (i < 0) return;
+        const p = prov[i];
+        p[key]++;
+        if (p.civ0 + p.mil0 + p.dock0 > p.slots0) p.slots0 = p.civ0 + p.mil0 + p.dock0;
+      }
+    };
+    put('civ0', nat.civ); put('mil0', nat.mil); put('dock0', nat.dock, (p) => p.coastal);
+    if (coreList.length) prov[nat.capital].res0.steel += Math.max(2, Math.round(nat.mil * 1.2));
+    // limanlar: şehirli kıyılar ve her kara parçasında en az bir tane
+    const byComp = new Map();
+    for (const i of nat.provs) {
+      const p = prov[i];
+      if (!p.coastal) continue;
+      if (p.dock0 > 0 || (p.city && (p.core === nat.id || p.cityPop >= 300))) p.port0 = 1;
+      const b = byComp.get(comp[i]);
+      if (!b || p.cityPop + p.vp > prov[b].cityPop + prov[b].vp) byComp.set(comp[i], i);
+    }
+    for (const i of byComp.values()) if (!nat.provs.some((j) => comp[j] === comp[i] && prov[j].port0)) prov[i].port0 = 1;
+  }
+  for (const d of GEO.deposits) { const pi = provAtPx(d[1], d[2], true); if (pi >= 0) prov[pi].res0[d[0]] += d[3]; }
+  // Fransa–Almanya sınırındaki tahkimat hattı
+  for (const i of nations[2].provs) if (prov[i].core === 2 && prov[i].nb.some((q) => q < NL && prov[q].owner0 === 0)) prov[i].fort0 = 2;
+
   const mini = new Uint16Array(MINI_W * MINI_H);
-  const mk = W / MINI_W;
-  for (let y = 0; y < MINI_H; y++) for (let x = 0; x < MINI_W; x++) mini[y * MINI_W + x] = raster[Math.floor(y * mk + mk / 2) * W + Math.floor(x * mk + mk / 2)];
+  const mkx = W / MINI_W, mky = H / MINI_H;
+  for (let y = 0; y < MINI_H; y++) for (let x = 0; x < MINI_W; x++) mini[y * MINI_W + x] = raster[Math.floor(y * mky + mky / 2) * W + Math.floor(x * mkx + mkx / 2)];
 
   await step('Hazır', 1);
   return { seed: String(seedStr), W, H, NL, NP, raster, height, prov, nations, mini };

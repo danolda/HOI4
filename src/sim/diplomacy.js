@@ -1,7 +1,7 @@
 // Diplomasi: savaşlar, ittifaklar, gerekçeler, teslimiyet ve barış.
 import { FACTION_NAMES, MAJORS } from '../data.js';
 import { clamp } from '../rng.js';
-import { atWar, isFriend, sameFaction, buildWarMatrix, buildFriendMatrix, baseOpinion, pushLog, natName, refreshAll, vpShare } from './core.js';
+import { atWar, isFriend, sameFaction, buildWarMatrix, buildFriendMatrix, baseOpinion, pushLog, natName, refreshAll, humansOf } from './core.js';
 import { setController, relocateCapital, destroyDiv, sweepDead, expelStrangers } from './military.js';
 
 export function rebuildRelations(G) { buildWarMatrix(G.S); buildFriendMatrix(G.S); }
@@ -25,6 +25,7 @@ export function factionOf(S, c) { return c.faction >= 0 ? S.factions.find((f) =>
 export function findFactionFor(G, c) {
   const S = G.S;
   let best = null;
+  if (c.ideo === 'mon') return null;
   for (const f of S.factions) {
     const L = S.C[f.leader];
     if (!L.alive || f.ideo !== c.ideo) continue;
@@ -42,7 +43,7 @@ export function createFaction(G, c, name) {
   const f = { id, name: nm, leader: c.id, members: [c.id], ideo: c.ideo };
   S.factions.push(f); c.faction = id;
   rebuildRelations(G);
-  pushLog(G, 'diplo', `${natName(G, c.id)}, ${nm} adlı ittifakı kurdu.`, c.capital, c.major || c.id === S.player);
+  pushLog(G, 'diplo', `${natName(G, c.id)}, ${nm} adlı ittifakı kurdu.`, c.capital, c.major || c.human);
   return f;
 }
 export function canJoinFaction(G, c, f) {
@@ -54,7 +55,8 @@ export function canJoinFaction(G, c, f) {
   for (const e of c._enemies) if (f.members.some((m) => isFriend(S, m, e))) return { ok: false, why: 'Düşmanların bu ittifakın dostu.' };
   const L = S.C[f.leader];
   if (c.ideo === 'dem' && f.ideo === 'dem' && S.tension < 15 && !c._atWar) return { ok: false, why: 'Küresel gerginlik %15 olmadan Cumhuriyetçiler ittifaka girmez.' };
-  if (L.op[c.id] < (f.ideo === c.ideo ? -10 : 35)) return { ok: false, why: 'İttifak lideri seni yeterince sevmiyor.' };
+  const common = f.members.some((m) => c._enemies.some((e) => atWar(S, m, e)));
+  if (L.op[c.id] < (f.ideo === c.ideo ? -10 : common ? -40 : 35)) return { ok: false, why: 'Farklı ideolojideki ittifak, ortak bir düşmanla savaşmıyorsan ancak çok iyi ilişkiyle kabul eder.' };
   return { ok: true };
 }
 export function joinFaction(G, c, fid, force) {
@@ -77,7 +79,7 @@ export function joinFaction(G, c, fid, force) {
     for (const m of f.members) if (!side.includes(m) && !other.includes(m) && S.C[m].alive) side.push(m);
   }
   rebuildRelations(G);
-  pushLog(G, 'diplo', `${natName(G, c.id)}, ${f.name} ittifakına katıldı.`, c.capital, c.major || c.id === S.player);
+  pushLog(G, 'diplo', `${natName(G, c.id)}, ${f.name} ittifakına katıldı.`, c.capital, c.major || c.human);
   return true;
 }
 function leaveFaction(G, c) {
@@ -119,7 +121,7 @@ export function startJustify(G, a, b, free) {
   }
   addTension(G, S.C[b].major ? 3 : 2);
   shiftOpinion(S, b, a, -25);
-  if (b === S.player || a === S.player) pushLog(G, 'diplo', `${natName(G, a)}, ${natName(G, b)} aleyhine savaş gerekçesi hazırlıyor.`, S.C[b].capital, b === S.player);
+  { const to = humansOf(S, [a, b]); if (to.length) pushLog(G, 'diplo', `${natName(G, a)}, ${natName(G, b)} aleyhine savaş gerekçesi hazırlıyor.`, S.C[b].capital, S.C[b].human, to); }
   return true;
 }
 export function canDeclare(G, a, b) {
@@ -156,7 +158,7 @@ export function declareWar(G, a, b) {
     shiftOpinion(S, x, y, -60); shiftOpinion(S, y, x, -60);
   }
   A.aggr++;
-  addTension(G, B.major ? 12 : 6);
+  addTension(G, B.major ? 14 : 7);
   for (const o of S.C) if (o.id !== a && o.ideo !== A.ideo) shiftOpinion(S, o.id, a, o.ideo === 'dem' ? -15 : -8);
   rebuildRelations(G);
   G.mapDirty = true;
@@ -186,7 +188,7 @@ export function signPact(G, a, b) {
   const until = S.hours + 24 * 365 * 3;
   A.pacts.push({ w: b, until }); B.pacts.push({ w: a, until });
   A.just = A.just.filter((j) => j.target !== b); A.wargoals = A.wargoals.filter((t) => t !== b);
-  pushLog(G, 'diplo', `${natName(G, a)} ile ${natName(G, b)} arasında saldırmazlık paktı imzalandı.`, B.capital, a === S.player || b === S.player);
+  pushLog(G, 'diplo', `${natName(G, a)} ile ${natName(G, b)} arasında saldırmazlık paktı imzalandı.`, B.capital, false);
   return true;
 }
 export function guarantee(G, a, b) {
@@ -194,7 +196,7 @@ export function guarantee(G, a, b) {
   if (A.pp < 40 || A.guar.includes(b) || atWar(S, a, b) || a === b) return false;
   A.pp -= 40; A.guar.push(b);
   shiftOpinion(S, b, a, 20);
-  pushLog(G, 'diplo', `${natName(G, a)}, ${natName(G, b)} devletinin bağımsızlığını garanti etti.`, S.C[b].capital, a === S.player || b === S.player);
+  pushLog(G, 'diplo', `${natName(G, a)}, ${natName(G, b)} devletinin bağımsızlığını garanti etti.`, S.C[b].capital, false);
   return true;
 }
 
@@ -237,12 +239,13 @@ export function capitulate(G, c) {
       q.push(v);
     }
   }
-  if (winner >= 0) for (let p = 0; p < W.NL; p++) if (S.ctrl[p] === c.id) {
+  // karadan ulaşılamayan (denizaşırı) topraklar sürgündeki yönetimde kalır; başkasından işgal edilenler sahibine döner
+  for (let p = 0; p < W.NL; p++) if (S.ctrl[p] === c.id) {
     const o = S.owner[p];
-    setController(G, p, o !== c.id && atWar(S, c.id, o) && !S.C[o].capit ? o : winner);
+    if (o !== c.id && atWar(S, c.id, o) && !S.C[o].capit) setController(G, p, o);
   }
   c.train = []; c.build = []; c.just = [];
-  addTension(G, c.major ? 4 : 2);
+  addTension(G, c.major ? 6 : 3);
   pushLog(G, 'war', `${natName(G, c.id)} teslim oldu!` + (winner >= 0 ? ` Topraklarının çoğu ${natName(G, winner)} işgalinde.` : ''), c.capital, true);
   rebuildRelations(G);
   // savaşın bitip bitmediğini denetle
@@ -251,7 +254,6 @@ export function capitulate(G, c) {
     if (!side) continue;
     if (w[side].every((m) => S.C[m].capit || !S.C[m].alive)) endWar(G, w, side === 'att' ? 'def' : 'att');
   }
-  if (c.id === S.player && !S.observer) { S.over = 'lose'; G.emit('gameOver', 'lose'); }
   G.mapDirty = true; G.unitsDirty = true;
 }
 
@@ -346,7 +348,7 @@ export function dailyDiplomacy(G) {
       if (j.prog >= 1) {
         c.just.splice(i, 1);
         if (S.C[j.target].alive && !c.wargoals.includes(j.target)) c.wargoals.push(j.target);
-        if (c.id === S.player) pushLog(G, 'diplo', `${natName(G, j.target)} aleyhine savaş gerekçesi hazır.`, S.C[j.target].capital, true);
+        if (c.human) pushLog(G, 'diplo', `${natName(G, j.target)} aleyhine savaş gerekçesi hazır.`, S.C[j.target].capital, true, [c.id]);
       }
     }
     if (c.pacts.length) c.pacts = c.pacts.filter((p) => p.until > S.hours && S.C[p.w].alive);
@@ -374,7 +376,7 @@ export function dailyDiplomacy(G) {
       if (held / Math.max(1, S._worldVp) < 0.5) continue;
       const order = f.members.slice().sort((a, b) => (S.C[b]._str || 0) - (S.C[a]._str || 0));
       const rebel = S.C[order[1]], lead = S.C[order[0]];
-      if (rebel.id === S.player && !S.observer) continue;
+      if (rebel.human || lead.human) continue;
       leaveFaction(G, rebel);
       shiftOpinion(S, rebel.id, lead.id, -70); shiftOpinion(S, lead.id, rebel.id, -70);
       rebel.ai.nextAggro = S.hours + 24 * 200; lead.ai.nextAggro = S.hours + 24 * 260;
@@ -383,16 +385,19 @@ export function dailyDiplomacy(G) {
       break;
     }
   }
-  // durağan savaşlar (oyuncu taraf değilse) kendiliğinden biter
+  // durağan savaşlar: yapay zekâlar arasında kendiliğinden biter, insan oyuncuya barış önerilir
   for (const w of S.wars.slice()) {
     const stale = (S.hours - w.last) / 24;
-    const playerIn = !S.observer && (w.att.includes(S.player) || w.def.includes(S.player));
-    if (stale > 540 && !playerIn) endWar(G, w, null);
-    else if (stale > 420 && playerIn && day % 90 === 0) G.emit('peaceOffer', w);
+    const humanIn = w.att.concat(w.def).some((id) => S.C[id].human && !S.C[id].capit);
+    if (stale > 540 && !humanIn) endWar(G, w, null);
+    else if (stale > 420 && humanIn && day % 90 === 0) w.offer = S.hours;
   }
-  // zafer denetimi
-  if (!S.over && !S.won && !S.observer) {
-    const P = S.C[S.player];
-    if (P.alive && !P.capit && vpShare(S, P) >= 0.6) { S.won = true; G.emit('gameOver', 'win'); }
-  }
+}
+
+// İnsan oyuncunun durağan savaşta önerilen barışı kabul etmesi
+export function acceptPeace(G, cid, warId) {
+  const S = G.S, w = S.wars.find((x) => x.id === warId);
+  if (!w || !w.offer || !(w.att.includes(cid) || w.def.includes(cid))) return false;
+  endWar(G, w, null);
+  return true;
 }

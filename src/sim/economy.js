@@ -42,7 +42,7 @@ export function bestBuildProv(G, c, type) {
 function finishBuild(G, c, b) {
   const S = G.S;
   if (b.type === 'civ' || b.type === 'mil' || b.type === 'dock' || b.type === 'infra' || b.type === 'fort' || b.type === 'port') S[b.type][b.prov]++;
-  if (c.id === S.player) pushLog(G, 'build', `${BUILDING[b.type].name} tamamlandı: ${G.world.prov[b.prov].name}.`, b.prov);
+  if (c.human) pushLog(G, 'build', `${BUILDING[b.type].name} tamamlandı: ${G.world.prov[b.prov].name}.`, b.prov, false, [c.id]);
   G.mapDirty = true;
 }
 
@@ -239,7 +239,7 @@ export function dailyEconomy(G, c) {
     if (r.prog >= 1) {
       c.research[i] = null;
       grantTech(G, c, t.id);
-      if (c.id === S.player) pushLog(G, 'tech', `Araştırma tamamlandı: ${t.name}.`);
+      if (c.human) pushLog(G, 'tech', `Araştırma tamamlandı: ${t.name}.`, -1, false, [c.id]);
     }
   }
 
@@ -250,7 +250,7 @@ export function dailyEconomy(G, c) {
       const g = GOAL_BY_ID[c.goal.id];
       c.goal = null; c.goalsDone.push(g.id);
       applyGoal(G, c, g);
-      if (c.id === S.player) pushLog(G, 'goal', `Ulusal hedef tamamlandı: ${g.name}.`);
+      if (c.human) pushLog(G, 'goal', `Ulusal hedef tamamlandı: ${g.name}.`, -1, false, [c.id]);
     }
   }
 
@@ -273,7 +273,7 @@ export function dailyEconomy(G, c) {
       c.train.splice(i--, 1);
       if (p >= 0) {
         const d = spawnDivision(G, c, tpl.id, p, { g: 0.6 });
-        if (c.id === S.player) pushLog(G, 'army', `${d.n} göreve hazır: ${G.world.prov[p].name}.`, p);
+        if (c.human) pushLog(G, 'army', `${d.n} göreve hazır: ${G.world.prov[p].name}.`, p, false, [c.id]);
       }
     }
   }

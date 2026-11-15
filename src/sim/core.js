@@ -16,22 +16,23 @@ export function baseOpinion(a, b) { return BASE_OPINION[a.ideo][b.ideo]; }
 export function newState(world, opts) {
   const N = world.nations.length, NL = world.NL;
   const rng = new RNG(hashString(world.seed + ':sim'));
+  const humans = opts.humans || (opts.player !== undefined && opts.player >= 0 ? [opts.player] : []);
   const S = {
-    v: 2, seed: world.seed, hours: 0, player: opts.player, diff: opts.diff ?? 1, tension: 0, N,
+    v: 3, seed: world.seed, hours: 0, player: opts.player ?? -1, diff: opts.diff ?? 1, tension: 0, N,
     C: [], owner: [], ctrl: [], civ: [], mil: [], dock: [], infra: [], fort: [], port: [], pop: [], rs: [], ro: [], ra: [],
-    divs: [], nextDiv: 1, battles: [], nextBattle: 1, wars: [], nextWar: 1, factions: [], log: [], over: null, rs0: 0,
-    speed: 0, observer: false,
+    divs: [], nextDiv: 1, battles: [], nextBattle: 1, wars: [], nextWar: 1, factions: [], log: [], logSeq: 0, rs0: 0,
+    observer: false,
   };
   for (let i = 0; i < NL; i++) {
     const p = world.prov[i];
-    S.owner.push(p.core); S.ctrl.push(p.core);
+    S.owner.push(p.owner0); S.ctrl.push(p.owner0);
     S.civ.push(p.civ0); S.mil.push(p.mil0); S.dock.push(p.dock0); S.infra.push(p.infra0); S.fort.push(p.fort0); S.port.push(p.port0);
     S.pop.push(p.pop0); S.rs.push(p.res0.steel); S.ro.push(p.res0.oil); S.ra.push(p.res0.alu);
   }
   for (const nat of world.nations) {
     const major = nat.major;
     const c = {
-      id: nat.id, alive: true, capit: false, capital: nat.capital, ideo: nat.ideo, major,
+      id: nat.id, alive: nat.provs.length > 0 && nat.capital >= 0, capit: false, capital: nat.capital, ideo: nat.ideo, major, human: humans.includes(nat.id),
       stab: { dem: 66, mon: 60, mil: 56, kol: 52 }[nat.ideo] + rng.int(-6, 6),
       ws: { dem: 25, mon: 35, mil: 60, kol: 52 }[nat.ideo] + rng.int(-5, 5),
       pp: 40, laws: { cons: nat.ideo === 'mil' || nat.ideo === 'kol' ? 1 : 0, eco: nat.ideo === 'mil' ? 1 : 0 },
@@ -39,14 +40,15 @@ export function newState(world, opts) {
       stock: {}, naval: 0, lines: [], build: [], imports: { steel: 0, oil: 0, alu: 0 }, train: [],
       tpls: JSON.parse(JSON.stringify(DEFAULT_TEMPLATES)), nextTpl: 1, divNo: {},
       faction: -1, casualties: 0, op: [], pacts: [], guar: [], just: [], wargoals: [], aggr: 0, intel: false,
-      auto: { stance: 1 }, ai: { nextAggro: 24 * (nat.ideo === 'mil' ? rng.int(420, 1000) : rng.int(600, 1500)), lastLines: -9999 }, deploy: -1, lost: 0, kills: 0,
+      auto: { stance: 1 }, ai: { nextAggro: 24 * (nat.ideo === 'mil' ? rng.int(240, 800) : rng.int(500, 1400)), lastLines: -9999, baseDivs: nat.divs }, deploy: -1, lost: 0, kills: 0,
     };
+    if (!c.alive) c.capit = true;
     for (const t of TECHS) {
-      if (t.year <= 1930 && (major || rng.chance(0.75))) c.techs[t.id] = true;
-      else if (t.year === 1931 && major && rng.chance(0.3)) c.techs[t.id] = true;
+      if (major) { if (t.year <= 1934 || (t.year === 1935 && rng.chance(0.4))) c.techs[t.id] = true; }
+      else if (t.year <= 1931 ? rng.chance(0.8) : t.year <= 1933 ? rng.chance(0.35) : false) c.techs[t.id] = true;
     }
-    if (nat.ideo === 'mil' && major) c.techs.tank1 = true;
-    if (major && rng.chance(0.6)) c.techs.fig1 = true;
+    // ön koşulu eksik kalan teknolojileri temizle
+    for (let pass = 0; pass < 4; pass++) for (const t of TECHS) if (c.techs[t.id] && t.req.some((r) => !c.techs[r])) delete c.techs[t.id];
     for (let i = 0; i < c.slots; i++) c.research.push(null);
     for (const k of EQ_KEYS) c.stock[k] = 0;
     S.C.push(c);
@@ -100,7 +102,7 @@ export function recalcMods(S, c) {
   add(LAWS.cons[c.laws.cons].fx);
   add(LAWS.eco[c.laws.eco].fx);
   const d = DIFF[S.diff];
-  const bonus = c.id === S.player && !S.observer ? d.player : d.ai;
+  const bonus = c.human ? d.player : d.ai;
   if (bonus) { m.prodOut = (m.prodOut || 0) + bonus; m.construction = (m.construction || 0) + bonus; m.research = (m.research || 0) + bonus * 0.5; }
   if (c.ideo === 'dem') { m.construction = (m.construction || 0) + 0.1; m.research = (m.research || 0) + 0.05; }
   if (c.ideo === 'mil') { m.atk = (m.atk || 0) + 0.05; m.justify = (m.justify || 0) + 0.25; }
@@ -162,8 +164,7 @@ export function refreshAll(G) {
     const o = S.owner[p], k = S.ctrl[p], vp = W.prov[p].vp;
     worldVp += vp;
     const O = S.C[o], K = S.C[k];
-    O._vpOwn += vp;
-    if (k !== o && !isFriend(S, o, k)) O._vpLost += vp;
+    if (W.prov[p].core === o) { O._vpOwn += vp; if (k !== o && !isFriend(S, o, k)) O._vpLost += vp; }
     K._vpHeld += vp; K._nProv++;
     const core = W.prov[p].core === k;
     const f = core && o === k ? 1 : o === k ? 0.5 : 0.25;
@@ -231,12 +232,17 @@ export function vpShare(S, c) {
   return held / Math.max(1, S._worldVp);
 }
 
-export function pushLog(G, type, text, prov, major) {
-  const e = { t: G.S.hours, type, text, prov: prov ?? -1 };
-  G.S.log.push(e);
-  if (G.S.log.length > 80) G.S.log.shift();
+// to: olayı görecek ülke kimlikleri (boşsa herkes görür)
+export function pushLog(G, type, text, prov, major, to) {
+  const S = G.S;
+  const e = { i: ++S.logSeq, t: S.hours, type, text, prov: prov ?? -1 };
+  if (major) e.m = 1;
+  if (to) e.to = to;
+  S.log.push(e);
+  if (S.log.length > 120) S.log.shift();
   G.emit('log', e, major);
 }
+export function humansOf(S, ids) { return ids.filter((id) => id >= 0 && S.C[id] && S.C[id].human); }
 
 export function natName(G, id) { return G.world.nations[id].name; }
 export function isMajor(c) { return c.id < MAJORS; }

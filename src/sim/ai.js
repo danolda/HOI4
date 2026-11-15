@@ -62,7 +62,7 @@ function aiEconomy(G, c) {
   }
   // yasalar
   if (c.laws.eco < 3 && (c._atWar || S.tension >= 30 || c.ideo === 'mil') && lawAllowed(G, c, 'eco', c.laws.eco + 1) && c.pp >= LAWS.eco[c.laws.eco + 1].cost + 20) setLaw(G, c, 'eco', c.laws.eco + 1);
-  if (c.laws.cons < 3 && (c._mpFree < 40000 || c._atWar || (S.tension >= 40 && c.laws.cons < 2)) && lawAllowed(G, c, 'cons', c.laws.cons + 1) && c.pp >= LAWS.cons[c.laws.cons + 1].cost + 20) setLaw(G, c, 'cons', c.laws.cons + 1);
+  if (c.laws.cons < 3 && ((c._mpFree < 40000 && (c.major || c._atWar)) || c._atWar || (S.tension >= 40 && c.laws.cons < 2 && c.major)) && lawAllowed(G, c, 'cons', c.laws.cons + 1) && c.pp >= LAWS.cons[c.laws.cons + 1].cost + 20) setLaw(G, c, 'cons', c.laws.cons + 1);
 }
 
 function aiResearchGoals(G, c) {
@@ -91,7 +91,7 @@ function aiResearchGoals(G, c) {
 
 function aiRecruit(G, c) {
   const S = G.S;
-  const maxDivs = Math.min(Math.floor(c._mpMax / 11000), Math.floor(8 + c._mil * 1.5), Math.floor(18 + c._nProv * 0.7));
+  const maxDivs = Math.min(90, Math.floor(c._mpMax / 11000), Math.max(Math.floor((c.ai.baseDivs || 0) * 1.3), Math.round(2 + c._mil * 1.4)), Math.floor(10 + c._nProv * 3));
   const waiting = c.train.filter((t) => !t.started).length;
   if (c._nDiv + c.train.length >= maxDivs || waiting >= 2) return;
   let nArm = 0, nMot = 0;
@@ -109,7 +109,12 @@ function strengthOf(G, id) {
   let s = c._str || 0;
   const f = factionOf(S, c);
   if (f) for (const m of f.members) if (m !== id) s += (S.C[m]._str || 0) * 0.8;
-  for (const g of S.C) if (g.alive && !g.capit && g.guar.includes(id) && !(f && f.members.includes(g.id))) s += (g._str || 0) * 0.6;
+  else {
+    // saldırıya uğrarsa katılacağı ideolojik ittifak da hesaba katılır
+    const pf = findFactionFor(G, c);
+    if (pf) for (const m of pf.members) s += (S.C[m]._str || 0) * 0.6;
+  }
+  for (const g of S.C) if (g.alive && !g.capit && g.guar.includes(id) && !(f && f.members.includes(g.id))) s += (g._str || 0) * 0.75;
   return s;
 }
 
@@ -135,26 +140,51 @@ function aiDiplomacy(G, c) {
   const S = G.S, rng = G.rng;
   const threat = S.C.some((o) => o.alive && !o.capit && (o.just.some((j) => j.target === c.id) || o.wargoals.includes(c.id)));
   if (c.faction < 0) {
-    const f = findFactionFor(G, c);
-    const want = c._atWar || threat || S.tension >= (c.ideo === 'dem' ? 25 : c.ideo === 'mon' ? 45 : 12);
+    const iso = G.world.nations[c.id].iso && S.tension < 60;
+    const want = c._atWar || threat || (!iso && c.ideo !== 'mon' && S.tension >= (c.ideo === 'dem' ? 25 : 30));
     if (want) {
+      const f = c.ideo === 'mon' ? null : findFactionFor(G, c);
       if (f && canJoinFaction(G, c, f).ok) joinFaction(G, c, f.id);
-      else if (!f && c.major) createFaction(G, c, FACTION_NAMES[c.ideo]);
+      else if (!f && c.major && c.ideo !== 'mon') createFaction(G, c, FACTION_NAMES[c.ideo]);
       else if (c._atWar || threat) {
-        for (const g of S.factions) if (canJoinFaction(G, c, g).ok && rng.chance(0.6)) { joinFaction(G, c, g.id); break; }
+        // düşmanımın düşmanı: düşmanlarımla savaşan ya da onlara ideolojik olarak karşı duran ittifak
+        const foes = c._enemies.slice();
+        for (const o of S.C) if (o.alive && !o.capit && (o.just.some((j) => j.target === c.id) || o.wargoals.includes(c.id))) foes.push(o.id);
+        let best = null, bs = 0.9;
+        for (const g of S.factions) {
+          if (!canJoinFaction(G, c, g).ok) continue;
+          let sc = g.members.some((m) => foes.some((e) => atWar(S, m, e))) ? 3 : 0;
+          if (foes.some((e) => S.C[e].ideo !== g.ideo && S.C[e].ideo !== 'mon')) sc += 1;
+          if (g.ideo === 'dem') sc += 0.5;
+          if (sc > bs) { bs = sc; best = g; }
+        }
+        if (best) joinFaction(G, c, best.id);
       }
     }
   }
   if (c.capit) return;
-  if (c.ideo === 'dem' && c.major && S.tension >= 20 && c.pp >= 70) {
-    const cands = S.C.filter((o) => o.alive && !o.capit && !o.major && o.id !== c.id && (o.ideo === 'dem' || o.ideo === 'mon') && !c.guar.includes(o.id) && !atWar(S, c.id, o.id)
-      && S.C.some((a) => a.alive && (a.just.some((j) => j.target === o.id) || a.wargoals.includes(o.id))));
-    if (cands.length) guarantee(G, c.id, rng.pick(cands).id);
+  if (c.ideo === 'dem' && c.major && S.tension >= 12 && c.pp >= 55 && !(G.world.nations[c.id].iso && S.tension < 60) && S.hours >= (c.ai.nextGuar || 0)) {
+    // yalnızca komşu olduğu saldırganın tehdit ettiği küçük devletleri korur
+    const cands = [];
+    for (const o of S.C) {
+      if (!o.alive || o.capit || o.major || o.id === c.id || !(o.ideo === 'dem' || o.ideo === 'mon') || c.guar.includes(o.id) || atWar(S, c.id, o.id)) continue;
+      const agg = S.C.find((a) => a.alive && !a.capit && (a.just.some((j) => j.target === o.id) || a.wargoals.includes(o.id)));
+      if (agg && !isFriend(S, c.id, agg.id) && (isNeighbor(G, c.id, agg.id) || isNeighbor(G, c.id, o.id))) cands.push(o);
+    }
+    if (cands.length) { guarantee(G, c.id, rng.pick(cands).id); c.ai.nextGuar = S.hours + 24 * 60; }
   }
   const aggressive = c.ideo === 'mil' || c.ideo === 'kol' || (c.ideo === 'mon' && c.major && S.tension > 35);
   if (aggressive) {
     for (const t of c.wargoals.slice()) {
-      if (canDeclare(G, c.id, t).ok && (c._str || 0) >= (S.C[t]._str || 0) * 0.9) { declareWar(G, c.id, t); return; }
+      if (!canDeclare(G, c.id, t).ok) continue;
+      const f = factionOf(S, c);
+      const my = (c._str || 0) + (f ? f.members.reduce((a, m) => a + (m !== c.id ? (S.C[m]._str || 0) * 0.5 : 0), 0) : 0);
+      const bigDefender = S.C.some((g) => g.alive && !g.capit && g.major && g.id !== t && (g.guar.includes(t) || (S.C[t].faction >= 0 && g.faction === S.C[t].faction)));
+      const bold = Math.min(0.55, Math.max(0, S.hours / (24 * 365) - 1.5) * 0.14); // yıllar geçtikçe saldırganlar cüretkârlaşır
+      if (my >= strengthOf(G, t) * ((bigDefender || S.C[t].major ? 1.45 : 1.05) - bold)) { declareWar(G, c.id, t); return; }
+      // hedef güçlü bir ittifakın korumasına girdi: vazgeç
+      c.wargoals = c.wargoals.filter((x) => x !== t);
+      c.ai.nextAggro = S.hours + 24 * 150;
     }
     if (!c._atWar && S.hours >= c.ai.nextAggro && !c.just.length && !c.wargoals.length) {
       const t = pickTarget(G, c);
@@ -164,7 +194,7 @@ function aiDiplomacy(G, c) {
       } else c.ai.nextAggro = S.hours + 24 * 120;
     }
   }
-  if (c.ideo === 'dem' && c.major && !c._atWar && S.tension >= 55) {
+  if (c.ideo === 'dem' && c.major && !c._atWar && S.tension >= 45) {
     for (const t of c.wargoals.slice()) if (canDeclare(G, c.id, t).ok) { declareWar(G, c.id, t); return; }
     if (!c.just.length && !c.wargoals.length && c.pp >= JUSTIFY_COST) {
       const cands = S.C.filter((o) => o.alive && !o.capit && o.aggr > 0 && o._atWar && canJustify(G, c.id, o.id).ok && (c._str || 0) > (o._str || 0) * 0.7);
@@ -195,7 +225,7 @@ export function aiMilitary(G, c, onlyAuto, stance = 1) {
   for (const o of S.C) {
     if (!o.alive || o.id === c.id) continue;
     const hot = o.just.some((j) => j.target === c.id) || o.wargoals.includes(c.id) || c.just.some((j) => j.target === o.id) || c.wargoals.includes(o.id);
-    watch[o.id] = hot ? 1 : c.op[o.id] < -25 || o.op[c.id] < -25 ? 0.3 : 0.07;
+    watch[o.id] = (hot ? 1 : c.op[o.id] < -25 || o.op[c.id] < -25 ? 0.3 : 0.05) * (!hot && (o.ideo === 'mil' || o.ideo === 'kol') && o.major ? 1.8 : 1);
   }
   wgt.fill(0); cnt.fill(0);
   const targets = new Map();
@@ -217,7 +247,7 @@ export function aiMilitary(G, c, onlyAuto, stance = 1) {
         let t = targets.get(q);
         if (!t) { t = []; targets.set(q, t); }
         t.push(p);
-      } else if (own && !isFriend(S, c.id, kq)) w += watch[kq];
+      } else if (own && !isFriend(S, c.id, kq)) w += watch[kq] * (P[p].core === c.id ? 1 : 0.2);
     }
     if (!own) w *= 0.5;
     if (own && war && P[p].coastal && (S.port[p] || P[p].vp >= 5) && c._navRatio < 0.75) w += 0.22 + P[p].vp * 0.02;
@@ -316,13 +346,18 @@ export function aiMilitary(G, c, onlyAuto, stance = 1) {
 
   // deniz aşırı çıkarma
   const day = Math.floor(S.hours / 24);
-  if (!onlyAuto && day % 10 === c.id % 10 && c._navRatio >= 0.45 && (targets.size === 0 || G.rng.chance(0.2))) {
+  if (!onlyAuto && day % 10 === c.id % 10 && c._navRatio >= 0.55 && c.naval >= 250 && (targets.size === 0 || G.rng.chance(0.2))) {
     const idle = mine.filter((d) => elig(d) && d.p < NL && S.ctrl[d.p] === c.id);
     if (idle.length >= 4) {
       let best = -1, bs = -1e9;
       const cap = P[c.capital];
+      const ports = [];
+      for (let q = 0; q < NL; q++) if (S.port[q] && S.ctrl[q] === c.id) ports.push(P[q]);
       for (let q = 0; q < NL; q++) {
         if (!P[q].coastal || !atWar(S, c.id, S.ctrl[q])) continue;
+        let near = 1e9;
+        for (const pt of ports) { const dd = Math.hypot(pt.cx - P[q].cx, pt.cy - P[q].cy); if (dd < near) near = dd; }
+        if (near > 380) continue; // menzil dışı
         let defs = 0;
         for (const dv of S._pd[q]) if (atWar(S, c.id, dv.o)) defs++;
         const s = P[q].vp * 3 + (S.port[q] ? 6 : 0) - defs * 6 - Math.hypot(P[q].cx - cap.cx, P[q].cy - cap.cy) / 160 + G.rng.next() * 4;
@@ -330,7 +365,7 @@ export function aiMilitary(G, c, onlyAuto, stance = 1) {
       }
       if (best >= 0) {
         idle.sort((a, b) => Math.hypot(P[a.p].cx - P[best].cx, P[a.p].cy - P[best].cy) - Math.hypot(P[b.p].cx - P[best].cx, P[b.p].cy - P[best].cy));
-        const k = Math.min(8, Math.max(3, Math.floor(n / 4)));
+        const k = Math.min(8, Math.max(3, Math.floor(n / 4)), 2 + Math.floor(c.naval / 180));
         let sent = 0, fails = 0;
         for (const d of idle) {
           if (sent >= k || fails >= 3) break;

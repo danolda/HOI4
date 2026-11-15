@@ -277,7 +277,9 @@ export class UnitLayer {
     if (!this.G) return;
     const map = this.map, dist = map.cam.dist;
     if (Math.abs(dist - this.lastDist) / Math.max(1, this.lastDist) > 0.08) this.rebuildArrows();
-    const s = clamp(1.22 - dist / 2300, 0.5, 1.08);
+    const s = clamp(1.16 - dist / 1500, 0.42, 1.05);
+    this.group.visible = dist < 1250; // çok uzaktan rozetler okunmaz, gizlenir
+    this.arrows.visible = dist < 1250;
     const hpx = 37 * s;
     const sy = map.pxScale(hpx), sx = sy * (BW / BH);
     const tmp = { x: 0, y: 0, z: 0 };
