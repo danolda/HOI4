@@ -87,6 +87,7 @@ export class UI {
       pause: () => app.togglePause(),
       mode: () => { app.map.setMode(arg, app.G); this.renderModes(); this.miniDirty = true; },
       logGo: () => { if (+arg >= 0) app.focusProv(+arg); },
+      openDiplo: () => { const id = +arg; if (app.me && id === app.me.id) this.openTab('state'); else if (app.G.S.C[id] && app.G.S.C[id].alive) { this.st.dipSel = id; this.openTab('diplo'); } },
       closeSide: () => app.clearSelection(),
       modalClose: () => this.closeModal(),
       modalYes: () => { const fn = this.modalYes; this.closeModal(); if (fn) fn(); },
@@ -273,7 +274,7 @@ export class UI {
     } else if (side && side.kind === 'stack') {
       const ds = S.divs.filter((d) => d.o === side.owner && d.p === side.prov && !d.dead);
       if (!ds.length) { app.side = null; el.hidden = true; return; }
-      html = head(W.nations[side.owner].name, `${ds.length} tümen`) + `<div class="p-body"><div class="row">${flagImg(app, side.owner)}<span class="grow">${W.prov[side.prov].name}</span>${relChip(app, side.owner)}</div>
+      html = head(W.nations[side.owner].name, `${ds.length} tümen`) + `<div class="p-body"><button class="item natlink" data-act="openDiplo" data-arg="${side.owner}" data-tip="${W.nations[side.owner].name} ile diplomasi sayfasını aç">${flagImg(app, side.owner)}<span class="grow"><b>${W.nations[side.owner].name}</b> <span class="muted">· ${W.prov[side.prov].name}</span></span>${relChip(app, side.owner)}<span class="tiny acc">Diplomasi ›</span></button>
         <div class="list">${ds.slice(0, 30).map((d) => unitRow(d, false)).join('')}</div></div>`;
     } else if (side && side.kind === 'prov') {
       const p = side.prov, P = W.prov[p];
@@ -287,7 +288,8 @@ export class UI {
         const quick = mine ? `<div class="sec"><h3>Buraya inşa et</h3><div class="row" style="flex-wrap:wrap">${Object.keys(BUILDING).map((t) => `<button class="btn sm ${eco.canBuild(G, c, t, p) ? '' : 'off'}" data-act="${eco.canBuild(G, c, t, p) ? 'quickBuild' : ''}" data-arg="${t}" data-arg2="${p}" data-tip="${BUILDING[t].desc}">${BUILDING[t].name}</button>`).join('')}</div>
           <div class="row"><button class="btn sm ${c.deploy === p ? 'on' : ''}" data-act="setDeploy" data-arg="${p}" data-tip="Yeni eğitilen tümenler burada göreve başlar.">Konuşlanma yeri yap</button></div></div>` : '';
         html = head(P.name, TERRAIN[P.terrain].name) + `<div class="p-body">
-          <div class="row">${flagImg(app, k)}<span class="grow">${W.nations[k].name}${k !== o ? ` <span class="tiny warn">işgalinde · sahibi ${W.nations[o].name}</span>` : ''}</span>${relChip(app, k)}</div>
+          <button class="item natlink" data-act="openDiplo" data-arg="${k}" data-tip="${k === c.id ? 'Devlet panelini aç' : W.nations[k].name + ' ile diplomasi sayfasını aç'}">${flagImg(app, k)}<span class="grow"><b>${W.nations[k].name}</b>${k !== o ? ' <span class="tiny warn">işgalinde</span>' : ''}</span>${relChip(app, k)}<span class="tiny acc">${k === c.id ? 'Devlet' : 'Diplomasi'} ›</span></button>
+          ${k !== o ? `<button class="item natlink" data-act="openDiplo" data-arg="${o}" data-tip="${W.nations[o].name} ile diplomasi sayfasını aç">${flagImg(app, o)}<span class="grow">Sahibi: <b>${W.nations[o].name}</b></span>${relChip(app, o)}<span class="tiny acc">${o === c.id ? 'Devlet' : 'Diplomasi'} ›</span></button>` : ''}
           <div class="kv small"><span>Zafer puanı</span><span>${P.vp}${P.capitalOf !== undefined ? ' · başkent' : ''}</span></div>
           <div class="kv small"><span>Nüfus</span><span>${fmt(S.pop[p])}</span></div>
           <div class="kv small"><span>Altyapı · tahkimat · liman</span><span>${S.infra[p]} · ${S.fort[p]} · ${S.port[p] ? 'var' : 'yok'}</span></div>

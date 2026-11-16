@@ -483,13 +483,16 @@ export async function generateWorld(seedStr = WORLD_SEED, step = async () => {})
   return { seed: String(seedStr), W, H, NL, NP, raster, height, prov, nations, mini };
 }
 
-export function heightAt(world, x, y) {
+// Harita düz çizilir: nesnelerin yerden yüksekliği her yerde sıfırdır.
+export function heightAt() { return 0; }
+
+// Ham yükselti değeri (-1 deniz dibi … 1 doruk); dağ çizimlerinin yerleşimi için.
+export function elevAt(world, x, y) {
   const gx = clamp(x / HS - 0.5, 0, HW - 1.001), gy = clamp(y / HS - 0.5, 0, HH - 1.001);
   const x0 = gx | 0, y0 = gy | 0, fx = gx - x0, fy = gy - y0;
   const h = world.height, i = y0 * HW + x0;
   const a = h[i] + (h[i + 1] - h[i]) * fx, b = h[i + HW] + (h[i + HW + 1] - h[i + HW]) * fx;
-  const v = a + (b - a) * fy;
-  return v > 0 ? v * HEIGHT_SCALE : 0;
+  return a + (b - a) * fy;
 }
 
 export function provAt(world, x, y) {

@@ -1,7 +1,7 @@
 // Şehir modelleri, şehir adları ve ülke adları.
 import THREE from '../three.js';
-import { heightAt } from '../worldgen.js';
-import { RNG, clamp } from '../rng.js';
+import { citySize } from './decals.js';
+import { clamp } from '../rng.js';
 
 function textSprite(text, opts) {
   const cv = document.createElement('canvas');
@@ -31,40 +31,8 @@ export class LabelLayer {
     map.scene.add(this.group);
     this.cityLabels = [];
     this.countryLabels = new Map();
-    this.buildCities();
     this.buildCityLabels();
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { this.buildCityLabels(); this.fontsReady = true; this.dirty = true; });
-  }
-
-  buildCities() {
-    const W = this.world;
-    const rng = new RNG(W.seed + ':cities');
-    const items = [];
-    for (let p = 0; p < W.NL; p++) {
-      const P = W.prov[p];
-      if (!P.city || P.vp < 2) continue;
-      const n = Math.min(10, 2 + Math.floor(P.vp / 3));
-      const k = Math.min(1, Math.sqrt(P.area) / 46); // küçük eyalette küçük şehir
-      for (let i = 0; i < n; i++) {
-        const a = rng.next() * Math.PI * 2, r = (i === 0 ? 0 : 2 + rng.next() * 7) * k * (P.vp >= 20 ? 1.3 : 1);
-        const x = P.cx + Math.cos(a) * r, z = P.cy + Math.sin(a) * r + 5 * k;
-        const tall = i === 0 && P.vp >= 20;
-        items.push({ x, z, w: (1.4 + rng.next() * 1.8) * k, d: (1.4 + rng.next() * 1.8) * k, h: (tall ? 7 + rng.next() * 2 : 1.3 + rng.next() * (1.6 + P.vp * 0.14)) * k, rot: rng.next() * Math.PI, shade: rng.next() });
-      }
-    }
-    const geo = new THREE.BoxGeometry(1, 1, 1);
-    geo.translate(0, 0.5, 0);
-    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff }), items.length);
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
-    items.forEach((it, i) => {
-      v.set(it.x, heightAt(W, it.x, it.z) - 0.1, it.z); q.setFromAxisAngle(up, it.rot); s.set(it.w, it.h, it.d);
-      m.compose(v, q, s); mesh.setMatrixAt(i, m);
-      col.setRGB(0.8 + it.shade * 0.14, 0.76 + it.shade * 0.14, 0.66 + it.shade * 0.12); mesh.setColorAt(i, col);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    this.group.add(mesh);
-    this.cityMesh = mesh;
   }
 
   buildCityLabels() {
@@ -76,9 +44,8 @@ export class LabelLayer {
       const cap = P.capitalOf !== undefined;
       if (!P.city || (!cap && P.vp < 3)) continue;
       const sp = textSprite((cap ? '★ ' : '') + P.name, { size: cap ? 16 : 13, weight: cap ? 700 : 600, color: cap ? '#fff3c4' : '#f2efe2' });
-      sp.center.set(0.5, 1);
-      const off = Math.min(12, Math.sqrt(P.area) / 4);
-      sp.position.set(P.cx, heightAt(W, P.cx, P.cy + off) + 1, P.cy + off);
+      sp.center.set(0, 0.5);
+      sp.position.set(P.cx + citySize(P) / 2 + 0.5, 1, P.cy);
       sp.renderOrder = 6;
       sp.userData.cap = cap;
       this.group.add(sp); this.cityLabels.push(sp);
@@ -188,6 +155,5 @@ export class LabelLayer {
       const sy = map.pxScale(sp.userData.px * s);
       sp.scale.set(sy * sp.userData.aspect, sy, 1);
     }
-    this.cityMesh.visible = dist < 900;
   }
 }

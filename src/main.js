@@ -9,6 +9,7 @@ import { runCommand } from './sim/commands.js';
 import { MapView } from './render/map.js';
 import { UnitLayer } from './render/units.js';
 import { LabelLayer } from './render/labels.js';
+import { DecalLayer } from './render/decals.js';
 import { UI } from './ui/ui.js';
 import { Net, randomCode, pack, unpack } from './net.js';
 
@@ -51,6 +52,7 @@ const app = {
     this.world = await generateWorld(undefined, step);
     const canvas = document.getElementById('map');
     this.map = new MapView(canvas, this.world);
+    this.decals = new DecalLayer(this.map, this.world);
     this.labels = new LabelLayer(this.map, this.world);
     this.units = new UnitLayer(this.map, this.world);
     this.units.selected = this.selection;
@@ -71,6 +73,7 @@ const app = {
       this.labels.clearCountryLabels();
       this.map.updatePalette(G);
       this.labels.rebuildCountryLabels(G);
+      this.decals.rebuildBuildings(G);
       this.units.rebuild();
       this.logSeen = G.S.logSeq || 0; this.seenOffer = {}; this.defeatShown = false; this.winShown = false;
       for (const w of G.S.wars) if (w.offer) this.seenOffer[w.id] = w.offer;
@@ -563,6 +566,7 @@ const app = {
     if (G.mapDirty) {
       G.mapDirty = false;
       map.updatePalette(G);
+      this.decals.rebuildBuildings(G);
       this.labels.dirty = true; this.ui.miniDirty = true;
       if (this.placement) this.refreshPlacement();
     }
@@ -578,6 +582,7 @@ const app = {
     }
     this.units.update(dt);
     this.labels.update();
+    this.decals.update();
     const ring = this.ring;
     if (ring && ring.visible) {
       ring.userData.t += dt;

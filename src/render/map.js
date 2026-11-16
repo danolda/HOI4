@@ -1,6 +1,6 @@
 // 3B harita: arazi ağı, eyalet gölgelendiricisi, kamera ve seçim.
 import THREE from '../three.js';
-import { MAP_W, MAP_H, HW, HH, HS, HEIGHT_SCALE, heightAt } from '../worldgen.js';
+import { MAP_W, MAP_H, HW, HH } from '../worldgen.js';
 import { TERRAIN, IDEOLOGY } from '../data.js';
 import { atWar, isFriend } from '../sim/core.js';
 import { clamp } from '../rng.js';
@@ -95,28 +95,20 @@ void main() {
   diff += 0.7 * (1.0 - sameK(pal(pid(cj + vec2(-4.0, 4.0)), 0.0).a, hk));
   float band = clamp(diff / 2.6, 0.0, 1.0) * 0.55 + (1.0 - smoothstep(0.5, 1.0, sameC)) * 0.5;
 
-  // yükseklik ve kabartma
+  // yükseklik yalnızca dağlık bölge tonu ve deniz derinliği için okunur (kabartma gölgesi yok)
   float h = texture2D(tHeight, vUv).r;
-  vec2 e = 1.0 / uHSize;
-  float hx = texture2D(tHeight, vUv + vec2(e.x, 0.0)).r - texture2D(tHeight, vUv - vec2(e.x, 0.0)).r;
-  float hy = texture2D(tHeight, vUv + vec2(0.0, e.y)).r - texture2D(tHeight, vUv - vec2(0.0, e.y)).r;
   float hl = max(h, 0.0);
-  vec3 n = normalize(vec3(-hx * 7.5 * step(0.0, h), 1.0, -hy * 7.5 * step(0.0, h)));
-  float shade = dot(n, normalize(vec3(-0.55, 0.75, -0.42)));
-  shade = 0.62 + 0.52 * smoothstep(0.25, 1.0, shade);
+  float shade = 1.0;
 
   // kara
   vec3 paper = vec3(0.87, 0.85, 0.77);
   vec3 lcol = mix(paper, fill.rgb, mix(0.8, 0.92, uTerrainMode));
   vec3 rock = vec3(0.74, 0.72, 0.68);
-  lcol = mix(lcol, mix(lcol, rock, 0.36), smoothstep(0.3, 0.85, hl));
+  lcol = mix(lcol, mix(lcol, rock, 0.3), smoothstep(0.12, 0.6, hl));
   lcol = mix(lcol, lcol * vec3(0.66, 0.64, 0.66), band * 0.75);
   lcol *= shade;
   float grain = hash(floor(vWorld.xz * 1.5)) - 0.5;
   lcol += grain * 0.018;
-  float cv = hl * 16.0;
-  float cl = abs(fract(cv) - 0.5) / max(fwidth(cv), 0.0001);
-  lcol *= 1.0 - 0.13 * (1.0 - smoothstep(0.0, 1.3, cl)) * step(0.04, hl);
   // işgal taraması
   float occ = step(0.5, pal(hi, 1.0).b);
   vec3 ocol = pal(hi, 2.0).rgb;
@@ -219,25 +211,11 @@ export class MapView {
   }
 
   buildTerrain() {
-    const W = this.world;
-    const GX = 512, GZ = 256;
-    const pos = new Float32Array((GX + 1) * (GZ + 1) * 3), uv = new Float32Array((GX + 1) * (GZ + 1) * 2);
-    let k = 0, u = 0;
-    for (let j = 0; j <= GZ; j++) for (let i = 0; i <= GX; i++) {
-      const x = (i / GX) * MAP_W, z = (j / GZ) * MAP_H;
-      pos[k++] = x; pos[k++] = heightAt(W, x, z); pos[k++] = z;
-      uv[u++] = i / GX; uv[u++] = j / GZ;
-    }
-    const idx = new Uint32Array(GX * GZ * 6);
-    let t = 0;
-    for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) {
-      const a = j * (GX + 1) + i, b = a + 1, c = a + GX + 1, d = c + 1;
-      idx[t++] = a; idx[t++] = c; idx[t++] = b; idx[t++] = b; idx[t++] = c; idx[t++] = d;
-    }
+    // Harita düz bir levhadır; dağlar çizim olarak üstüne konur (render/decals.js).
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, MAP_W, 0, 0, 0, 0, MAP_H, MAP_W, 0, MAP_H]), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), 2));
+    geo.setIndex([0, 2, 1, 1, 2, 3]);
     this.uniforms = {
       tProv: { value: this.tProv }, tPal: { value: this.tPal }, tHeight: { value: this.tHeight },
       uSize: { value: new THREE.Vector2(MAP_W, MAP_H) }, uHSize: { value: new THREE.Vector2(HW, HH) },
@@ -304,7 +282,8 @@ export class MapView {
   }
 
   // ---- kamera
-  pitch() { return THREE.MathUtils.degToRad(50 + 30 * Math.pow(clamp((this.cam.dist - MIN_DIST) / (MAX_DIST - MIN_DIST), 0, 1), 0.7)); }
+  // Tepeden bakış: yakında hafif eğik (76°), uzakta neredeyse dik (89°)
+  pitch() { return THREE.MathUtils.degToRad(76 + 13 * Math.pow(clamp((this.cam.dist - MIN_DIST) / (MAX_DIST - MIN_DIST), 0, 1), 0.6)); }
   placeCamera() {
     const c = this.cam, pt = this.pitch();
     this.camera.position.set(c.tx + c.dist * Math.cos(pt) * Math.sin(c.yaw), c.dist * Math.sin(pt), c.tz + c.dist * Math.cos(pt) * Math.cos(c.yaw));
@@ -327,21 +306,7 @@ export class MapView {
   pick(cx, cy) {
     const g = this.groundAt(cx, cy);
     if (!g) return null;
-    const { o, d } = g;
-    // yükseklik alanına karşı ışın yürütme
-    const t0 = (HEIGHT_SCALE - o.y) / d.y, t1 = g.t;
-    let ta = Math.max(0, t0), found = t1;
-    const steps = 28;
-    for (let i = 1; i <= steps; i++) {
-      const t = ta + ((t1 - ta) * i) / steps;
-      const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
-      if (y <= heightAt(this.world, x, z)) {
-        let lo = ta + ((t1 - ta) * (i - 1)) / steps, hi = t;
-        for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; if (o.y + d.y * m <= heightAt(this.world, o.x + d.x * m, o.z + d.z * m)) hi = m; else lo = m; }
-        found = hi; break;
-      }
-    }
-    const x = o.x + d.x * found, z = o.z + d.z * found;
+    const { x, z } = g;
     if (x < 0 || z < 0 || x >= MAP_W || z >= MAP_H) return { x, z, prov: -1 };
     return { x, z, prov: this.world.raster[(z | 0) * MAP_W + (x | 0)] };
   }
