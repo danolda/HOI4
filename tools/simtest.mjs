@@ -18,6 +18,8 @@ for (let y = 0; y < years; y++) {
   for (let h = 0; h < 24 * 365; h++) G.tickHour();
   const alive = S.C.filter((c) => c.alive);
   const line = alive.filter((c) => c.major || c._nDiv >= 16).map((c) => `${world.nations[c.id].tag}${c.capit ? '†' : ''}:${c._nProv}p/${c._nDiv}d`).join(' ') + ` · yaşayan ${alive.length}`;
+  const ws = alive.reduce((a, c) => a + (c.capit ? 0 : c._str || 0), 0) || 1;
+  console.log('   ittifaklar: ' + (S.factions.map((f) => `${f.name} ${f.members.length} üye %${Math.round((100 * f.members.reduce((a, m) => a + (S.C[m].capit ? 0 : S.C[m]._str || 0), 0)) / ws)}`).join(' · ') || 'yok'));
   console.log(`${fmtDate(S.hours)} | gerginlik ${S.tension.toFixed(0)} | savaş ${S.wars.length} | muharebe ${S.battles.length} | tümen ${S.divs.length} | ${line}`);
 }
 const ms = Date.now() - t0;

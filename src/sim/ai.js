@@ -3,7 +3,7 @@ import { TECHS, GOALS, EQUIP, TERRAIN, LAWS, FACTION_NAMES, yearFrac } from '../
 import { ST_IDLE, ST_RETREAT, atWar, isFriend, divStats, tplOf, tplStats, tplAllowed } from './core.js';
 import { bestBuildProv, queueBuild, addLine, setLineFac, techAvailable, startResearch, goalAvailable, startGoal, lawAllowed, setLaw, queueTrain } from './economy.js';
 import { orderMove, haltDiv } from './military.js';
-import { canJustify, startJustify, canDeclare, declareWar, findFactionFor, canJoinFaction, joinFaction, createFaction, guarantee, isNeighbor, factionOf, JUSTIFY_COST } from './diplomacy.js';
+import { canJustify, startJustify, canDeclare, declareWar, findFactionFor, canJoinFaction, joinFaction, createFaction, guarantee, isNeighbor, factionOf, factionShare, JUSTIFY_COST } from './diplomacy.js';
 
 function weighted(rng, items, wf) {
   let tot = 0;
@@ -82,7 +82,7 @@ function aiResearchGoals(G, c) {
       if (g.id.startsWith('g_arm')) w = c.ideo === 'mil' ? 1.6 : 1;
       if (g.id === 'g_pol4') w = c.ideo === 'mil' ? 3 : c.ideo === 'kol' ? 2 : 0.4;
       if (g.id === 'g_pol5') w = c.ideo === 'mon' ? 3 : c.ideo === 'dem' ? 0.8 : 0.15;
-      if (g.id === 'g_pol6') w = S.tension > 20 ? 2.5 : 0.8;
+      if (g.id === 'g_pol6') w = c.major ? (S.tension > 20 ? 2.5 : 0.8) : 0.3;
       return w;
     });
     if (g) startGoal(G, c, g.id);
@@ -141,7 +141,10 @@ function aiDiplomacy(G, c) {
   const threat = S.C.some((o) => o.alive && !o.capit && (o.just.some((j) => j.target === c.id) || o.wargoals.includes(c.id)));
   if (c.faction < 0) {
     const iso = G.world.nations[c.id].iso && S.tension < 60;
-    const want = c._atWar || threat || (!iso && c.ideo !== 'mon' && S.tension >= (c.ideo === 'dem' ? 25 : 30));
+    // Küçük devletler ancak saldırıya uğrayınca ya da tehdit edilince ittifak arar; büyük güçler gerginliğe
+    // ya da başka bir bloğun aşırı güçlenmesine (denge) tepki olarak blok kurar veya katılır.
+    const rival = S.factions.some((g) => !g.members.includes(c.id) && factionShare(S, g) > 0.33);
+    const want = c._atWar || threat || (c.major && !iso && c.ideo !== 'mon' && (rival || S.tension >= (c.ideo === 'dem' ? 25 : 30)));
     if (want) {
       const f = c.ideo === 'mon' ? null : findFactionFor(G, c);
       if (f && canJoinFaction(G, c, f).ok) joinFaction(G, c, f.id);
@@ -163,13 +166,14 @@ function aiDiplomacy(G, c) {
     }
   }
   if (c.capit) return;
-  if (c.ideo === 'dem' && c.major && S.tension >= 12 && c.pp >= 55 && !(G.world.nations[c.id].iso && S.tension < 60) && S.hours >= (c.ai.nextGuar || 0)) {
+  if (c.ideo === 'dem' && c.major && S.tension >= 12 && c.pp >= 55 && c.guar.length < 4 && !(G.world.nations[c.id].iso && S.tension < 60) && S.hours >= (c.ai.nextGuar || 0)) {
     // yalnızca komşu olduğu saldırganın tehdit ettiği küçük devletleri korur
     const cands = [];
     for (const o of S.C) {
       if (!o.alive || o.capit || o.major || o.id === c.id || !(o.ideo === 'dem' || o.ideo === 'mon') || c.guar.includes(o.id) || atWar(S, c.id, o.id)) continue;
       const agg = S.C.find((a) => a.alive && !a.capit && (a.just.some((j) => j.target === o.id) || a.wargoals.includes(o.id)));
-      if (agg && !isFriend(S, c.id, agg.id) && (isNeighbor(G, c.id, agg.id) || isNeighbor(G, c.id, o.id))) cands.push(o);
+      const P0 = G.world.prov[c.capital], P1 = G.world.prov[o.capital];
+      if (agg && !isFriend(S, c.id, agg.id) && P0 && P1 && Math.hypot(P0.cx - P1.cx, P0.cy - P1.cy) < 420 && (isNeighbor(G, c.id, agg.id) || isNeighbor(G, c.id, o.id))) cands.push(o);
     }
     if (cands.length) { guarantee(G, c.id, rng.pick(cands).id); c.ai.nextGuar = S.hours + 24 * 60; }
   }
@@ -194,7 +198,8 @@ function aiDiplomacy(G, c) {
       } else c.ai.nextAggro = S.hours + 24 * 120;
     }
   }
-  if (c.ideo === 'dem' && c.major && !c._atWar && S.tension >= 45) {
+  // Demokrasiler tepkiseldir: garanti ve ittifak yükümlülüğüyle savaşa girer; kendiliğinden müdahale ancak çok yüksek gerginlikte olur
+  if (c.ideo === 'dem' && c.major && !c._atWar && S.tension >= 78) {
     for (const t of c.wargoals.slice()) if (canDeclare(G, c.id, t).ok) { declareWar(G, c.id, t); return; }
     if (!c.just.length && !c.wargoals.length && c.pp >= JUSTIFY_COST) {
       const cands = S.C.filter((o) => o.alive && !o.capit && o.aggr > 0 && o._atWar && canJustify(G, c.id, o.id).ok && (c._str || 0) > (o._str || 0) * 0.7);

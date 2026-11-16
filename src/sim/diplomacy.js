@@ -46,6 +46,17 @@ export function createFaction(G, c, name) {
   pushLog(G, 'diplo', `${natName(G, c.id)}, ${nm} adlı ittifakı kurdu.`, c.capital, c.major || c.human);
   return f;
 }
+// İttifakın dünya kara gücündeki payı (0–1)
+export function factionShare(S, f) {
+  let fs = 0, ws = 0;
+  for (const c of S.C) {
+    if (!c.alive || c.capit) continue;
+    const v = c._str || 0;
+    ws += v;
+    if (f.members.includes(c.id)) fs += v;
+  }
+  return ws > 0 ? fs / ws : 0;
+}
 export function canJoinFaction(G, c, f) {
   const S = G.S;
   if (c.faction >= 0 || !f) return { ok: false, why: 'Zaten bir ittifaktasın.' };
@@ -56,6 +67,17 @@ export function canJoinFaction(G, c, f) {
   const L = S.C[f.leader];
   if (c.ideo === 'dem' && f.ideo === 'dem' && S.tension < 15 && !c._atWar) return { ok: false, why: 'Küresel gerginlik %15 olmadan Cumhuriyetçiler ittifaka girmez.' };
   const common = f.members.some((m) => c._enemies.some((e) => atWar(S, m, e)));
+  // Güç dengesi: bir ittifak dünyayı yutacak kadar büyüyemez
+  const share = factionShare(S, f);
+  if (share > 0.45 || (share > 0.33 && !common)) return { ok: false, why: 'Bu ittifak zaten çok güçlü; yeni üye almıyor.' };
+  if (f.members.length >= 10 || (f.members.length >= 8 && !common)) return { ok: false, why: 'İttifak yeni üye alamayacak kadar kalabalık.' };
+  if (!c.human && !c.major && !common) {
+    // küçük devletleri yalnızca yakınlarındaki bir ittifak korumayı üstlenir
+    const W = G.world, P = W.prov[c.capital];
+    let near = false;
+    for (const m of f.members) { const Q = W.prov[S.C[m].capital]; if (P && Q && Math.hypot(P.cx - Q.cx, P.cy - Q.cy) < 460) { near = true; break; } }
+    if (!near) return { ok: false, why: 'İttifak bu kadar uzaktaki bir devleti korumayı üstlenmiyor.' };
+  }
   if (L.op[c.id] < (f.ideo === c.ideo ? -10 : common ? -40 : 35)) return { ok: false, why: 'Farklı ideolojideki ittifak, ortak bir düşmanla savaşmıyorsan ancak çok iyi ilişkiyle kabul eder.' };
   return { ok: true };
 }

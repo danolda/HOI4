@@ -134,6 +134,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 button.item:hover { border-color: var(--accent); }
 .item.sel { border-color: var(--accent); background: var(--panel-3); }
 .item .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kind { font-style: normal; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 5px; border-radius: 2px; margin-right: 6px; background: var(--panel-3); color: var(--text); border-left: 3px solid var(--muted); }
+.kind.mot { border-left-color: var(--blue); }
+.kind.arm { border-left-color: var(--warn); color: var(--warn); }
 .item.natlink { border-color: var(--line); cursor: pointer; }
 .item.natlink:hover { border-color: var(--accent); background: var(--panel-3); }
 .note { font-size: 13px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 8px; }

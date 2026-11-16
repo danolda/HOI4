@@ -3,7 +3,7 @@ import { EQUIP, BUILDING, LAWS, TECHS, TECH_BY_ID, TECH_BASE_DAYS, GOALS, GOAL_B
 import { clamp } from '../rng.js';
 import { recalcMods, refreshAll, tplOf, tplStats, tplAllowed, pushLog, natName, baseOpinion } from './core.js';
 import { spawnDivision, deployProvince } from './military.js';
-import { createFaction, joinFaction, findFactionFor } from './diplomacy.js';
+import { createFaction, joinFaction, findFactionFor, canJoinFaction } from './diplomacy.js';
 
 // ---------- inşaat
 export function provSlots(G, c, p) { return G.world.prov[p].slots0 + c._mods.slots; }
@@ -149,8 +149,12 @@ function applyGoal(G, c, g) {
   if (fx.special === 'opinion') for (const o of S.C) if (o.id !== c.id && o.ideo === c.ideo) { o.op[c.id] = clamp(o.op[c.id] + 20, -100, 100); c.op[o.id] = clamp(c.op[o.id] + 20, -100, 100); }
   if (fx.special === 'intel') c.intel = true;
   if (fx.special === 'faction' && c.faction < 0) {
+    // İttifak kuralları burada da geçerli: denge bozulacaksa katılım olmaz. Yalnızca büyük güçler ve
+    // insan oyuncular kendi bloğunu kurar; küçük devletler katılamazsa nüfuz kazanır.
     const f = findFactionFor(G, c);
-    if (f) joinFaction(G, c, f.id, true); else createFaction(G, c, FACTION_NAMES[c.ideo]);
+    if (f && canJoinFaction(G, c, f).ok) joinFaction(G, c, f.id);
+    else if (!f && (c.major || c.human)) createFaction(G, c, FACTION_NAMES[c.ideo]);
+    else c.pp += 60;
   }
   recalcMods(S, c);
   G.mapDirty = true;

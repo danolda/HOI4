@@ -10,7 +10,8 @@ import { renderPanel, panelTitle, ACTS, fmt, pct, flagImg, relChip, HELP_HTML } 
 
 const TABS = [['state', 'Devlet'], ['goals', 'Hedefler'], ['research', 'Araştırma'], ['production', 'Üretim'], ['build', 'İnşaat'], ['army', 'Ordu'], ['diplo', 'Diplomasi']];
 const bar = (v, cls = '') => `<div class="bar ${cls}"><i style="width:${Math.max(0, Math.min(100, v * 100)).toFixed(1)}%"></i></div>`;
-const LOG_MS = 30000;
+const LOG_MS = 10000;
+const KIND_NAME = { inf: 'Piyade', mot: 'Motorize', arm: 'Zırhlı' };
 const SPEED_NAMES = ['', 'Çok yavaş', 'Yavaş', 'Normal', 'Hızlı', 'Çok hızlı'];
 
 export class UI {
@@ -97,8 +98,12 @@ export class UI {
       halt: () => app.cmd('halt', app.selectedDivs().map((d) => d.id)),
       autoSel: () => { const ds = app.selectedDivs(); app.cmd('autoSet', ds.map((d) => d.id), !ds.every((d) => d.auto)); },
       disband: () => app.confirm({ kicker: 'Terhis', title: `${app.selection.size} tümen dağıtılsın mı?`, text: 'Askerler ve teçhizat depoya döner.', yes: 'Dağıt' }, () => { app.cmd('disband', app.selectedDivs().map((d) => d.id)); app.clearSelection(); }),
-      selOne: () => { app.selection = new Set([+arg]); app.units.selected = app.selection; app.selChanged(); },
+      selOne: () => { app.split = null; app.selection = new Set([+arg]); app.units.selected = app.selection; app.selChanged(); },
       selProvAll: () => app.selectProvince(+arg),
+      split: () => app.startSplit(+arg),
+      splitNext: () => app.nextSplit(false),
+      splitAll: () => app.endSplit(),
+      selKind: () => { const S = app.G.S; app.split = null; app.selection = new Set(app.selectedDivs().filter((d) => divStats(S, d).kind === arg).map((d) => d.id)); app.units.selected = app.selection; app.selChanged(); },
       quickBuild: () => app.cmd('build', arg, +arg2),
       setDeploy: () => app.cmd('deploy', +arg),
       startPick: () => app.pickNation(+arg),
@@ -212,7 +217,7 @@ export class UI {
     this.el.alerts.innerHTML = a.slice(0, 5).map(([t, tab, cls]) => `<button class="${cls || ''}" data-act="tab" data-arg="${tab}">${t}</button>`).join('');
     this.renderRail();
   }
-  // Sol alttaki bildirimler: her kayıt ilk göründüğü andan 30 saniye sonra kendiliğinden kaybolur.
+  // Sol alttaki bildirimler: her kayıt ilk göründüğü andan 10 saniye sonra kendiliğinden kaybolur.
   resetLog(S) {
     this.logAt = new Map();
     for (const e of S.log) this.logAt.set(e.i, -1e12); // oyuna girerken eski kayıtları gösterme
@@ -256,7 +261,7 @@ export class UI {
       const status = d.st === ST_RETREAT ? 'Çekiliyor' : d.b >= 0 ? 'Saldırıyor' : d.nos > 2 ? 'İkmalsiz' : d.st === ST_MOVE ? (d.p >= W.NL ? 'Denizde' : 'Yürüyor') : S._bByProv.has(d.p) ? 'Savunuyor' : d.auto && d.o === S.player ? 'Otomatik' : 'Bekliyor';
       const tag = clickable ? 'button' : 'div';
       return `<${tag} class="unit" ${clickable ? `data-act="selOne" data-arg="${d.id}"` : ''} data-tip="Saldırı ${Math.round(st.atk)} · Savunma ${Math.round(st.def)} · Yarma ${Math.round(st.brk)}&#10;Teşkilat ${pct(d.g)} · Güç ${pct(d.s)}">
-        <span>${d.n}</span><span class="tiny ${d.b >= 0 ? 'warn' : d.nos > 2 || d.st === ST_RETREAT ? 'bad' : 'muted'}">${status}</span>
+        <span><i class="kind ${st.kind}">${KIND_NAME[st.kind]}</i>${d.n}</span><span class="tiny ${d.b >= 0 ? 'warn' : d.nos > 2 || d.st === ST_RETREAT ? 'bad' : 'muted'}">${status}</span>
         <span class="bars">${bar(d.g, 'g')}${bar(d.s, 'w')}</span></${tag}>`;
     };
     const side = app.side;
@@ -266,12 +271,24 @@ export class UI {
       if (!ds.length) { app.clearSelection(); return; }
       const org = ds.reduce((s, d) => s + d.g, 0) / ds.length, str = ds.reduce((s, d) => s + d.s, 0) / ds.length;
       const allAuto = ds.every((d) => d.auto);
+      // hızlı bölme: yığını eşit gruplara ayırıp sırayla emir vermek için
+      const sp = app.split, total = sp ? sp.pool.length : ds.length;
+      const sbtn = (k, label) => (total > k ? `<button class="btn sm ${sp && sp.size === k ? 'on' : ''}" data-act="split" data-arg="${k}" data-tip="${k} tümenlik gruplara böl">${label}</button>` : '');
+      const half = Math.ceil(total / 2);
+      let splitHtml = total > 2 ? `<div class="row" style="flex-wrap:wrap"><span class="small muted">Böl:</span>${sbtn(2, "2'şer")}${sbtn(3, "3'er")}${sbtn(4, "4'er")}${total > 3 && half > 4 ? `<button class="btn sm ${sp && sp.size === half ? 'on' : ''}" data-act="split" data-arg="${half}" data-tip="İki eşit gruba böl">Yarı yarıya</button>` : ''}</div>` : '';
+      if (sp) splitHtml += `<div class="note acc">Grup seçili: ${ds.length} tümen · sırada ${Math.max(0, sp.pool.length - ds.length)} tümen. Hedef göster; sıradaki grup kendiliğinden seçilir.</div>
+        <div class="row"><button class="btn sm" data-act="splitNext" data-tip="Bu grubu atla, sıradakini seç">Sonraki grup ›</button><button class="btn sm" data-act="splitAll">Hepsini seç</button></div>`;
+      const kc = { inf: 0, mot: 0, arm: 0 };
+      for (const d of ds) kc[divStats(S, d).kind]++;
+      const nk = (kc.inf > 0) + (kc.mot > 0) + (kc.arm > 0);
+      const kindHtml = nk > 1 ? `<div class="row" style="flex-wrap:wrap"><span class="small muted">Yalnız:</span>${['inf', 'mot', 'arm'].filter((k) => kc[k]).map((k) => `<button class="btn sm" data-act="selKind" data-arg="${k}"><i class="kind ${k}">${KIND_NAME[k]}</i>${kc[k]}</button>`).join('')}</div>` : '';
       html = head(`${ds.length} tümen`, 'seçili') + `<div class="p-body">
         <div class="kv small"><span>Ortalama teşkilat</span><span>${pct(org)}</span></div>${bar(org, 'g')}
         <div class="kv small"><span>Ortalama güç</span><span>${pct(str)}</span></div>${bar(str, 'w')}
         <div class="row" style="flex-wrap:wrap"><button class="btn sm" data-act="halt" data-tip="Emri iptal et, yerinde kal">Durdur</button>
           <button class="btn sm ${allAuto ? 'on' : ''}" data-act="autoSel" data-tip="Açıkken tümenler cepheye kendiliğinden dağılır ve saldırır.">Otomatik cephe: ${allAuto ? 'açık' : 'kapalı'}</button>
           <button class="btn sm danger" data-act="disband">Dağıt</button></div>
+        ${splitHtml}${kindHtml}
         <div class="note">Sağ tıkla hedef göster. Düşman eyaletine yürüyen tümen saldırır.</div>
         <div class="list">${ds.slice(0, 40).map((d) => unitRow(d, true)).join('')}${ds.length > 40 ? `<div class="tiny muted">…ve ${ds.length - 40} tümen daha</div>` : ''}</div></div>`;
     } else if (side && side.kind === 'battle') {

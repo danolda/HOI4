@@ -68,6 +68,7 @@ const app = {
     this.G = G;
     this.units.setGame(G);
     if (!keepView) {
+      this.split = null;
       this.selection.clear(); this.side = null; this.placement = null;
       this.map.sel = -1; this.map.highlight = null;
       this.labels.clearCountryLabels();
@@ -369,9 +370,43 @@ const app = {
     this.units.dirty = true;
     this.ui.renderSide();
   },
-  clearSelection() { this.selection.clear(); this.side = null; this.selChanged(); },
+  clearSelection() { this.split = null; this.selection.clear(); this.side = null; this.selChanged(); },
+  // Hızlı bölme: seçili yığını k tümenlik gruplara ayırır; emir verildikçe sıradaki grup seçilir.
+  startSplit(k) {
+    const pool = this.split ? this.split.pool.filter((id) => this.G.S._byId.has(id)) : this.selectedDivs().map((d) => d.id);
+    if (pool.length <= k) return;
+    this.split = { pool, size: k };
+    this.pickSplitGroup();
+  },
+  pickSplitGroup() {
+    const sp = this.split;
+    if (!sp) return;
+    sp.pool = sp.pool.filter((id) => this.G.S._byId.has(id));
+    if (!sp.pool.length) { this.clearSelection(); return; }
+    this.selection = new Set(sp.pool.slice(0, sp.size));
+    this.units.selected = this.selection;
+    if (sp.pool.length <= sp.size) this.split = null; // son grup
+    this.side = null; this.selChanged();
+  },
+  nextSplit(done) {
+    const sp = this.split;
+    if (!sp) return;
+    const cur = sp.pool.filter((id) => this.selection.has(id));
+    sp.pool = sp.pool.filter((id) => !this.selection.has(id));
+    if (!done) sp.pool = sp.pool.concat(cur); // atlanan grup sıranın sonuna geçer
+    this.pickSplitGroup();
+  },
+  endSplit() {
+    const sp = this.split;
+    if (!sp) return;
+    this.split = null;
+    this.selection = new Set(sp.pool.filter((id) => this.G.S._byId.has(id)));
+    this.units.selected = this.selection;
+    this.selChanged();
+  },
   selectProvince(p) {
     const S = this.G.S;
+    this.split = null;
     this.selection.clear();
     for (const d of S._pd[p]) if (d.o === S.player) this.selection.add(d.id);
     this.side = null; this.selChanged();
@@ -380,6 +415,7 @@ const app = {
     const ids = this.selectedDivs().map((d) => d.id);
     if (!ids.length || prov < 0) return;
     this.cmd('move', ids, prov);
+    if (this.split) this.nextSplit(true);
     const P = this.world.prov[prov];
     this.ring.position.set(P.cx, heightAt(this.world, P.cx, P.cy) + 2.5, P.cy);
     this.ring.userData.t = 0; this.ring.visible = true;
@@ -489,6 +525,7 @@ const app = {
       else if (d.box) {
         const r = canvas.getBoundingClientRect();
         const x0 = Math.min(d.x0, e.clientX) - r.left, x1 = Math.max(d.x0, e.clientX) - r.left, y0 = Math.min(d.y0, e.clientY) - r.top, y1 = Math.max(d.y0, e.clientY) - r.top;
+        this.split = null;
         this.selection.clear();
         for (const st of this.units.stacksInRect(x0, y0, x1, y1)) if (st.rel === 'me') for (const dv of st.divs) this.selection.add(dv.id);
         this.side = null; this.selChanged();
@@ -519,6 +556,7 @@ const app = {
     }
     if (d.button !== 0) return;
     if (this.placement) { if (pk && pk.prov >= 0) this.placeAt(pk.prov); return; }
+    this.split = null;
     if (hit && hit.battle) { this.selection.clear(); this.side = { kind: 'battle', id: hit.battle.id }; }
     else if (hit && hit.stack) {
       const st = hit.stack;

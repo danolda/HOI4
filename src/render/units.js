@@ -82,11 +82,26 @@ export class UnitLayer {
     const nc = this.world.nations[st.owner].color;
     rr(g, 7, 7, 38, 36, 4);
     g.fillStyle = `rgb(${nc[0]},${nc[1]},${nc[2]})`; g.fill();
-    g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 2.2; g.lineCap = 'round';
-    if (st.kind === 'arm') { g.beginPath(); g.ellipse(26, 25, 12, 7.5, 0, 0, Math.PI * 2); g.stroke(); }
-    else {
-      g.beginPath(); g.moveTo(13, 13); g.lineTo(39, 37); g.moveTo(39, 13); g.lineTo(13, 37); g.stroke();
-      if (st.kind === 'mot') { g.fillStyle = '#fff'; g.beginPath(); g.arc(18, 39, 2.6, 0, 7); g.arc(34, 39, 2.6, 0, 7); g.fill(); }
+    // tür simgesi: piyade = çapraz, motorize = kamyon, zırhlı = tank; altta tür şeridi
+    g.strokeStyle = '#ffffff'; g.fillStyle = '#ffffff'; g.lineCap = 'round'; g.lineJoin = 'round';
+    if (st.kind === 'arm') {
+      rr(g, 11, 27, 30, 10, 5); g.fill();                       // palet
+      g.fillRect(15, 20, 22, 8);                                // gövde
+      rr(g, 19, 13, 12, 8, 2); g.fill();                        // kule
+      g.lineWidth = 3; g.beginPath(); g.moveTo(31, 17); g.lineTo(42, 17); g.stroke(); // namlu
+      g.fillStyle = `rgb(${nc[0]},${nc[1]},${nc[2]})`;
+      for (const x of [17, 23, 29, 35]) { g.beginPath(); g.arc(x, 32, 2.1, 0, 7); g.fill(); }
+      g.fillStyle = '#f2b84b'; g.fillRect(7, 40, 38, 3);
+    } else if (st.kind === 'mot') {
+      g.fillRect(11, 14, 19, 15);                               // kasa
+      rr(g, 31, 19, 9, 10, 2); g.fill();                        // kabin
+      g.fillRect(11, 28, 29, 3);
+      for (const x of [17, 34]) { g.beginPath(); g.arc(x, 33, 4.6, 0, 7); g.fill(); }
+      g.fillStyle = `rgb(${nc[0]},${nc[1]},${nc[2]})`;
+      for (const x of [17, 34]) { g.beginPath(); g.arc(x, 33, 1.9, 0, 7); g.fill(); }
+      g.fillStyle = '#6aa5e8'; g.fillRect(7, 40, 38, 3);
+    } else {
+      g.lineWidth = 2.6; g.beginPath(); g.moveTo(13, 13); g.lineTo(39, 37); g.moveTo(39, 13); g.lineTo(13, 37); g.stroke();
     }
     g.fillStyle = '#eef4f2';
     g.font = '700 30px "Big Shoulders Display", "Arial Narrow", sans-serif';
@@ -138,14 +153,15 @@ export class UnitLayer {
     for (const d of S.divs) {
       if (d.dead || !this.vis[d.p]) continue;
       const next = d.st === ST_IDLE || !d.path.length ? -1 : d.path[0];
-      const key = `${d.p}|${d.o}|${next}|${d.b >= 0 ? 1 : 0}`;
+      // piyade, motorize ve zırhlı tümenler ayrı rozetlerde gösterilir
+      const kind = divStats(S, d).kind;
+      const key = `${d.p}|${d.o}|${next}|${d.b >= 0 ? 1 : 0}|${kind}`;
       let st = map.get(key);
       if (!st) {
-        st = { key, prov: d.p, owner: d.o, next, st: d.st, attacking: d.b >= 0, divs: [], org: 0, str: 0, prog: 0, kinds: { inf: 0, mot: 0, arm: 0 }, selN: 0, auto: 0, nos: 0, rel: this.relOf(d.o) };
+        st = { key, prov: d.p, owner: d.o, next, st: d.st, attacking: d.b >= 0, divs: [], org: 0, str: 0, prog: 0, kind, selN: 0, auto: 0, nos: 0, rel: this.relOf(d.o) };
         map.set(key, st);
       }
       st.divs.push(d); st.org += d.g; st.str += d.s; st.prog = Math.max(st.prog, d.prog);
-      st.kinds[divStats(S, d).kind]++;
       if (this.selected.has(d.id)) st.selN++;
       if (d.auto) st.auto++;
       if (d.nos > 2) st.nos++;
@@ -154,12 +170,18 @@ export class UnitLayer {
     const stacks = [];
     for (const st of map.values()) {
       st.n = st.divs.length; st.org /= st.n; st.str /= st.n;
-      st.kind = st.kinds.arm >= st.n / 2 && st.kinds.arm > 0 ? 'arm' : st.kinds.mot > st.kinds.inf ? 'mot' : 'inf';
       st.auto = st.auto === st.n && st.rel === 'me';
-      if (st.next < 0) { const l = perProv.get(st.prov) || []; st.slot = l.length; l.push(st); perProv.set(st.prov, l); }
+      // aynı yerde duran (ya da aynı yöne yürüyen) rozetler yan yana dizilir
+      const gk = st.prov + '|' + st.next;
+      const l = perProv.get(gk) || [];
+      l.push(st); perProv.set(gk, l);
       stacks.push(st);
     }
-    for (const l of perProv.values()) for (const st of l) st.slots = l.length;
+    const kOrder = { inf: 0, mot: 1, arm: 2 };
+    for (const l of perProv.values()) {
+      l.sort((a, b) => (a.owner - b.owner) || (kOrder[a.kind] - kOrder[b.kind]) || (a.attacking - b.attacking));
+      l.forEach((st, i) => { st.slot = i; st.slots = l.length; });
+    }
     this.stacks = stacks;
     // sprite eşitleme
     const seen = new Set();
@@ -214,9 +236,8 @@ export class UnitLayer {
       const B = W.prov[st.next];
       const t = st.attacking ? Math.min(st.prog, 0.3) : st.prog;
       x += (B.cx - A.cx) * t; z += (B.cy - A.cy) * t;
-    } else if (st.slots > 1) {
-      x += (st.slot - (st.slots - 1) / 2) * Math.min(22, this.map.cam.dist * 0.035);
     }
+    if (st.slots > 1) x += (st.slot - (st.slots - 1) / 2) * Math.min(46, this.map.cam.dist * 0.07);
     out.x = x; out.z = z; out.y = heightAt(W, x, z) + 3;
     return out;
   }
