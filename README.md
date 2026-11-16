@@ -38,7 +38,7 @@ Zafer koşulu: ittifakınla dünya zafer puanlarının %60'ını elinde tutmak. 
 2. Diğer oyuncu ana menüde kodu yazıp **Katıl** der ve kendi ülkesini seçer.
 3. Odayı kuran oyunu başlatır.
 
-Oyunu odayı kuranın tarayıcısı yürütür; diğer oyuncunun emirleri ona iletilir ve dünyanın anlık görüntüsü geri gönderilir. Bağlantı [PeerJS](https://peerjs.com) üzerinden doğrudan iki tarayıcı arasında kurulur (WebRTC). Bazı kurumsal ağlar ve katı güvenlik duvarları bu bağlantıyı engelleyebilir. Bağlantı koparsa misafirin ülkesini yapay zekâ devralır; misafir aynı kodla geri dönebilir.
+Oyunu odayı kuranın tarayıcısı yürütür; diğer oyuncunun emirleri ona iletilir ve dünyanın anlık görüntüsü geri gönderilir. Bağlantı [PeerJS](https://peerjs.com) üzerinden doğrudan iki tarayıcı arasında kurulur (WebRTC). Doğrudan yol kurulamazsa PeerJS'in aktarma (TURN) sunucuları denenir; UDP'yi tümüyle kapatan kurumsal ağlar ve katı güvenlik duvarları bağlantıyı yine de engelleyebilir. Bu durumda oyun açık bir hata iletisi gösterir. Bağlantı koparsa misafirin ülkesini yapay zekâ devralır; misafir aynı kodla geri dönebilir.
 
 ## Yerelde çalıştırma
 

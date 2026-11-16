@@ -591,7 +591,20 @@ const app = {
 };
 
 window.__app = app;
-const start = () => { app.boot().then(() => requestAnimationFrame((t) => app.frame(t))).catch((e) => { console.error(e); const l = document.getElementById('loading'); if (l) { l.hidden = false; l.querySelector('.step').textContent = 'Oyun başlatılamadı: ' + e.message; } }); };
+const start = () => {
+  app.boot().then(() => requestAnimationFrame((t) => app.frame(t))).catch((e) => {
+    console.error(e);
+    const l = document.getElementById('loading');
+    if (!l) return;
+    l.hidden = false;
+    const gl = /webgl/i.test(String(e && e.message));
+    l.querySelector('.step').textContent = gl
+      ? 'Tarayıcın 3B grafiği (WebGL) başlatamadı. Tarayıcı ayarlarından donanım hızlandırmayı aç ya da güncel bir Chrome, Edge veya Firefox ile yeniden dene.'
+      : 'Oyun başlatılamadı: ' + (e && e.message ? e.message : 'bilinmeyen hata') + '. Sayfayı yenilemeyi dene.';
+    const bar = l.querySelector('.bar');
+    if (bar) bar.hidden = true;
+  });
+};
 const hot = window.claude && window.claude.hot;
 if (hot && hot.snapshot) hot.snapshot(() => (app.playing && app.G && !app.mp ? { save: app.G.serialize(), playing: true } : {}));
 if (hot && hot.ready) hot.ready(start); else start();
