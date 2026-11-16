@@ -214,7 +214,7 @@ function arrive(G, d, next) {
   d.path.shift(); d.prog = 0; d.ent = 0;
   if (next < NL) {
     const k = S.ctrl[next];
-    if (k !== d.o && atWar(S, d.o, k)) capture(G, next, d.o);
+    if (k !== d.o && atWar(S, d.o, k)) { capture(G, next, d.o); d.g = Math.max(0.12, d.g - 0.22); } // ilerleyiş birliği yorar
   }
   if (!d.path.length) { d.st = ST_IDLE; d.mis = 0; }
   G.unitsDirty = true;

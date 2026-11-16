@@ -255,6 +255,28 @@ export function aiMilitary(G, c, onlyAuto, stance = 1) {
     wgt[p] = w; total += w;
   }
   if (total <= 0) return;
+  if (war) {
+    // başkent tehdit altındaysa savunmasını güçlendir
+    let near = false;
+    for (const q of P[c.capital].nb) { if (q >= NL) continue; if (atWar(S, c.id, S.ctrl[q])) near = true; else for (const r of P[q].nb) if (r < NL && atWar(S, c.id, S.ctrl[r])) near = true; }
+    if (near && S.ctrl[c.capital] === c.id) { wgt[c.capital] += 3; total += 3; }
+    // ağırlık merkezi: bir düşman eyaletinin çevresine yığınak yap
+    if (stance > 0 && targets.size) {
+      const ai = onlyAuto ? (c.auto.focus || (c.auto.focus = {})) : c.ai;
+      if (ai.focusQ === undefined || !targets.has(ai.focusQ) || S.hours > (ai.focusUntil || 0)) {
+        let best = -1, bs = -1e9;
+        for (const [q, froms] of targets) {
+          let nDef = 0;
+          for (const dv of S._pd[q]) if (atWar(S, c.id, dv.o)) nDef++;
+          const sc = P[q].vp * 2.5 - nDef * 1.6 + froms.length * 1.8 - (TERRAIN[P[q].terrain] || TERRAIN.plains).atk * -8 - S.fort[q] * 2 + G.rng.next() * 5;
+          if (sc > bs) { bs = sc; best = q; }
+        }
+        ai.focusQ = best; ai.focusUntil = S.hours + 24 * (18 + Math.floor(G.rng.next() * 16));
+      }
+      const fr = targets.get(ai.focusQ);
+      if (fr) for (const p of fr) { const add = wgt[p] * (stance >= 2 ? 3.2 : 2.2); wgt[p] += add; total += add; }
+    }
+  }
 
   const homeOf = (d) => (d.path.length ? d.path[d.path.length - 1] : d.p);
   for (const d of mine) { const h = homeOf(d); if (h < NL) cnt[h]++; }
