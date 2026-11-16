@@ -76,6 +76,7 @@ const app = {
       this.decals.rebuildBuildings(G);
       this.units.rebuild();
       this.logSeen = G.S.logSeq || 0; this.seenOffer = {}; this.defeatShown = false; this.winShown = false;
+      this.ui.resetLog(G.S);
       for (const w of G.S.wars) if (w.offer) this.seenOffer[w.id] = w.offer;
     } else { G.mapDirty = true; G.unitsDirty = true; }
     G.on('day', () => {

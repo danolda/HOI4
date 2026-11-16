@@ -10,6 +10,7 @@ import { renderPanel, panelTitle, ACTS, fmt, pct, flagImg, relChip, HELP_HTML } 
 
 const TABS = [['state', 'Devlet'], ['goals', 'Hedefler'], ['research', 'Araştırma'], ['production', 'Üretim'], ['build', 'İnşaat'], ['army', 'Ordu'], ['diplo', 'Diplomasi']];
 const bar = (v, cls = '') => `<div class="bar ${cls}"><i style="width:${Math.max(0, Math.min(100, v * 100)).toFixed(1)}%"></i></div>`;
+const LOG_MS = 30000;
 const SPEED_NAMES = ['', 'Çok yavaş', 'Yavaş', 'Normal', 'Hızlı', 'Çok hızlı'];
 
 export class UI {
@@ -17,7 +18,7 @@ export class UI {
     this.app = app;
     this.st = { tab: null, goalSel: null, resSlot: 0, techCat: 'ind', armyTab: 'rec', tplSel: 't_inf', dipSel: -1 };
     this.toasts = [];
-    this.timers = { top: 0, panel: 0, side: 0, mini: 0 };
+    this.timers = { top: 0, panel: 0, side: 0, mini: 0, log: 0 };
     this.holding = false;
     const root = this.root = document.getElementById('app');
     root.insertAdjacentHTML('beforeend', `
@@ -211,11 +212,26 @@ export class UI {
     this.el.alerts.innerHTML = a.slice(0, 5).map(([t, tab, cls]) => `<button class="${cls || ''}" data-act="tab" data-arg="${tab}">${t}</button>`).join('');
     this.renderRail();
   }
+  // Sol alttaki bildirimler: her kayıt ilk göründüğü andan 30 saniye sonra kendiliğinden kaybolur.
+  resetLog(S) {
+    this.logAt = new Map();
+    for (const e of S.log) this.logAt.set(e.i, -1e12); // oyuna girerken eski kayıtları gösterme
+    this.logHtml = null;
+  }
   renderLog() {
-    const S = this.app.G.S;
-    const items = S.log.filter((e) => this.app.visibleLog(e)).slice(-4);
-    this.el.log.innerHTML = this.toasts.map((t) => `<button class="warn">${t.text}</button>`).join('')
-      + items.map((e) => `<button class="${e.type}" data-act="logGo" data-arg="${e.prov}"><time>${fmtDate(e.t)}</time>${e.text}</button>`).join('');
+    const S = this.app.G.S, now = performance.now();
+    if (!this.logAt) this.logAt = new Map();
+    const items = [];
+    for (const e of S.log) {
+      if (!this.app.visibleLog(e)) continue;
+      let t = this.logAt.get(e.i);
+      if (t === undefined) { t = now; this.logAt.set(e.i, t); }
+      if (now - t < LOG_MS) items.push(e);
+    }
+    if (this.logAt.size > 400) { const min = (S.logSeq || 0) - 200; for (const k of this.logAt.keys()) if (k < min) this.logAt.delete(k); }
+    const html = this.toasts.map((t) => `<button class="warn">${t.text}</button>`).join('')
+      + items.slice(-4).map((e) => `<button class="${e.type}" data-act="logGo" data-arg="${e.prov}"><time>${fmtDate(e.t)}</time>${e.text}</button>`).join('');
+    if (html !== this.logHtml) { this.logHtml = html; this.el.log.innerHTML = html; }
   }
   toast(text) {
     const t = { text };
@@ -335,6 +351,8 @@ export class UI {
     if (t.top > 0.25) { t.top = 0; if (!this.holding) { this.renderTop(); this.renderSide(); } }
     if (t.panel > 0.7 && !app.paused) { t.panel = 0; if (!this.holding) { this.renderPanel(); this.renderAlerts(); } }
     if (t.mini > 0.2) { t.mini = 0; this.drawMinimap(); }
+    t.log += dt;
+    if (t.log > 1) { t.log = 0; if (!this.holding) this.renderLog(); } // süresi dolan bildirimleri kaldır
   }
 
   // ---------- pencereler
