@@ -312,6 +312,7 @@ export const HELP_HTML = `<div class="help">
   <kbd>Boşluk</kbd><span>Zamanı durdur ya da başlat. <kbd>1</kbd>–<kbd>5</kbd> hız seçer.</span>
   <kbd>Esc</kbd><span>Seçimi ve yerleşim kipini bırak.</span>
   <span class="acc">Zafer</span><span>İttifakınla dünya zafer puanlarının %60'ını elinde tut. Başkentini ve şehirlerini kaybedersen ülken teslim olur.</span>
+  <span class="acc">Çevrim içi</span><span>Ana menüde ya da Menü panelinde oda kur, kodu arkadaşına gönder. O da ana menüden kodu yazıp katılır ve kendi ülkesini seçer. Oyunu odayı kuranın bilgisayarı yürütür.</span>
   <span class="acc">Muharebe</span><span>Düşman eyaletine yürüyen tümen savaşa girer. Üstünlük için 2–3 kat güç, birden çok yönden saldırı, tank ve hava desteği gerekir. Kuşatılan birlik ikmalsiz kalır.</span>
 </div>`;
 

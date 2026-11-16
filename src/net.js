@@ -14,11 +14,11 @@ export function randomCode() {
 const ERR = {
   'peer-unavailable': 'Bu kodla açık bir oda bulunamadı. Kodu ve arkadaşının odayı kurduğunu kontrol et.',
   'unavailable-id': 'Bu oda kodu şu an kullanımda. Yeniden dene.',
-  network: 'Bağlantı sunucusuna ulaşılamadı. İnternet bağlantını kontrol et.',
+  network: 'Bağlantı sunucusuna ulaşılamadı. İnternet bağlantını kontrol et; sayfa gömülü bir görüntüleyicide açıksa çevrim içi oyun için yayınlanan siteyi kullan.',
   'browser-incompatible': 'Bu tarayıcı ya da ortam eşler arası bağlantıyı desteklemiyor.',
   disconnected: 'Bağlantı sunucusuyla iletişim koptu.',
   'server-error': 'Bağlantı sunucusu yanıt vermiyor. Biraz sonra yeniden dene.',
-  'socket-error': 'Bağlantı sunucusuna ulaşılamadı.',
+  'socket-error': 'Bağlantı sunucusuna ulaşılamadı. Sayfa gömülü bir görüntüleyicide açıksa çevrim içi oyun için yayınlanan siteyi kullan.',
   'socket-closed': 'Bağlantı sunucusuyla iletişim kapandı.',
   webrtc: 'Arkadaşınla doğrudan bağlantı kurulamadı (ağ ya da güvenlik duvarı engelliyor olabilir).',
 };

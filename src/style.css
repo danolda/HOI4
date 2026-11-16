@@ -246,6 +246,7 @@ kbd { font-family: var(--font-body); font-size: 12.5px; background: var(--panel-
   #bl { left: var(--gut-l); bottom: 62px; max-width: calc(100% - 32px); }
   #br { bottom: 62px; }
   #minimap { display: none; }
+  #panel:not([hidden]) ~ #br, #panel:not([hidden]) ~ #bl { display: none; }
   #log button:nth-last-child(n+3) { display: none; }
   #alerts { top: calc(var(--top-h) + 6px); }
   #start { flex-direction: column; overflow-y: auto; pointer-events: auto; background: rgba(5, 10, 13, 0.35); }
